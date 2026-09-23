@@ -1,0 +1,156 @@
+import type { Question } from "../types";
+
+// Built-in insight types with fixed branding. Custom lens types get a stable
+// palette color hashed from their slug and labels derived from the producing
+// lens (lens_label) or a humanized slug.
+export const BUILTIN_TYPE_META: Record<string, { label: string; plural: string; color: string }> = {
+  // The operator's own questions. Deliberately a neutral rather than a sixth
+  // hue: the five agent types already hold teal, amber, violet, emerald and
+  // red, and an answer to your own question is not another finding category.
+  asked: { label: "你提的问题", plural: "你提的问题", color: "#475569" },
+  question: { label: "问题", plural: "问题", color: "#0d9488" },
+  objection: { label: "异议", plural: "异议", color: "#f59e0b" },
+  observation: { label: "观察", plural: "观察", color: "#7c3aed" },
+  opportunity: { label: "机会", plural: "机会", color: "#10b981" },
+  action_item: { label: "行动项", plural: "行动项", color: "#e2231a" },
+  // Strategic signals the live panel did not have room for, and the ones that
+  // have since aged out of the current cycle (ALP-308). Each row's lens_label
+  // carries the section it came from, so the card badge still reads "Risk" or
+  // "Next Question" rather than a flat "Strategic".
+  signal: { label: "战略信号", plural: "战略信号", color: "#0284c7" },
+  signal_history: { label: "历史信号", plural: "历史信号", color: "#64748b" },
+};
+
+// Types whose lens_label is a per-row section badge (Signal, Risk, Next
+// Question, Opportunity, Action Cue - see SIGNAL_SECTIONS in
+// backend/app/services/agents/signal_insights.py) rather than the heading of
+// the lens that produced the whole group. Group labels for these must never
+// be derived from the rows: a cycle with one row per section and a history of
+// mostly action cues both used to render as a second "Action Cue" group.
+// The live chips keep the short plurals above (Strategic, History; see
+// docs/agents.md); the post-call group headings get these fuller names.
+const SIGNAL_GROUP_LABELS: Record<string, string> = {
+  signal: "战略信号",
+  signal_history: "历史信号",
+};
+
+const SIGNAL_BADGE_LABELS: Record<string, string> = {
+  signal: "信号",
+  risk: "风险",
+  "next question": "下一个问题",
+  opportunity: "机会",
+  "action cue": "行动提示",
+};
+
+// Display order for type groupings; custom types sort after built-ins.
+export const BUILTIN_TYPE_ORDER = ["asked", "signal", "action_item", "objection", "opportunity", "observation", "question", "signal_history"];
+
+const CUSTOM_TYPE_COLORS = ["#0284c7", "#c026d3", "#ea580c", "#4f46e5", "#0891b2", "#65a30d", "#be185d", "#7c2d12"];
+
+export function humanizeTypeSlug(slug: string): string {
+  const known: Record<string, string> = {
+    insight: "洞察",
+    question: "问题",
+    objection: "异议",
+    observation: "观察",
+    opportunity: "机会",
+    action_item: "行动项",
+    signal: "战略信号",
+  };
+  if (known[slug]) return known[slug];
+  return (slug || "insight")
+    .split("_")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+export function typeColor(itemType: string): string {
+  const meta = BUILTIN_TYPE_META[itemType];
+  if (meta) return meta.color;
+  let hash = 0;
+  for (let i = 0; i < itemType.length; i++) hash = (hash * 31 + itemType.charCodeAt(i)) >>> 0;
+  return CUSTOM_TYPE_COLORS[hash % CUSTOM_TYPE_COLORS.length];
+}
+
+// Singular badge label: the producing lens heading wins, then built-in label,
+// then a humanized slug for custom types.
+export function typeLabel(itemType: string, lensLabel?: string): string {
+  if (lensLabel && lensLabel.trim()) {
+    const label = lensLabel.trim();
+    return SIGNAL_BADGE_LABELS[label.toLowerCase()] || label;
+  }
+  return BUILTIN_TYPE_META[itemType]?.label ?? humanizeTypeSlug(itemType);
+}
+
+// Group/section heading for a set of same-type insights: prefer the most
+// common lens heading among them so renamed lenses surface everywhere.
+// Signal rows are the exception - their lens_label is the section badge of
+// each individual row, so a fixed group name is the only honest one.
+export function typeGroupLabel(itemType: string, questions: Question[]): string {
+  const fixed = SIGNAL_GROUP_LABELS[itemType];
+  if (fixed) return fixed;
+  const counts = new Map<string, number>();
+  for (const q of questions) {
+    const label = (q.lens_label || "").trim();
+    if (label) counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  let best = "";
+  let bestCount = 0;
+  for (const [label, count] of counts) {
+    if (count > bestCount) {
+      best = label;
+      bestCount = count;
+    }
+  }
+  if (best) return best;
+  return BUILTIN_TYPE_META[itemType]?.plural ?? humanizeTypeSlug(itemType);
+}
+
+// The Strategic filter carries every current signal plus this many of the most
+// recently retired ones, so it reads as "the strategic picture right now"
+// rather than only the current cycle's output. The full trail stays under
+// History; the borrowed rows appear in both.
+export const RECENT_HISTORY_IN_STRATEGIC = 3;
+
+// The signal_history rows the Strategic filter borrows: the most recently
+// retired first. Retirement stamps updated_at (see sync_signal_insights);
+// created_at is the fallback for rows that predate that stamp.
+export function recentSignalHistoryIds(
+  questions: Question[],
+  limit: number = RECENT_HISTORY_IN_STRATEGIC,
+): Set<string> {
+  const retiredAtMs = (q: Question) => {
+    const value = Date.parse(q.updated_at || q.created_at);
+    return Number.isFinite(value) ? value : 0;
+  };
+  return new Set(
+    questions
+      .filter((q) => (q.item_type || "question") === "signal_history" && !q.dismissed)
+      .sort((a, b) => retiredAtMs(b) - retiredAtMs(a) || a.id.localeCompare(b.id))
+      .slice(0, limit)
+      .map((q) => q.id),
+  );
+}
+
+// Ordered distinct item types present in a question list: built-ins in fixed
+// order first, then custom types in first-seen order.
+export function presentTypes(questions: Question[]): string[] {
+  const present = new Set<string>();
+  const customs: string[] = [];
+  for (const q of questions) {
+    const t = q.item_type || "question";
+    if (!present.has(t)) {
+      present.add(t);
+      if (!BUILTIN_TYPE_META[t]) customs.push(t);
+    }
+  }
+  return [...BUILTIN_TYPE_ORDER.filter((t) => present.has(t)), ...customs];
+}
+
+export function visibleEnrichmentNotes(notes?: string): string[] {
+  return (notes || "")
+    .split("\n")
+    .map((note) => note.trim())
+    .filter((note) => note && note !== "Merged with another insight" && note !== "Adjusted");
+}

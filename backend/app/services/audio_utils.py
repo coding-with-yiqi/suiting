@@ -1,0 +1,153 @@
+"""Shared audio utility functions."""
+
+import struct
+from math import ceil
+
+import numpy as np
+
+
+def make_wav_header(
+    pcm_data: bytes,
+    sample_rate: int = 16000,
+    bits_per_sample: int = 16,
+    channels: int = 1,
+) -> bytes:
+    """Create a minimal WAV header for raw PCM data."""
+    data_size = len(pcm_data)
+    byte_rate = sample_rate * channels * bits_per_sample // 8
+    block_align = channels * bits_per_sample // 8
+
+    header = struct.pack(
+        '<4sI4s4sIHHIIHH4sI',
+        b'RIFF',
+        36 + data_size,
+        b'WAVE',
+        b'fmt ',
+        16,
+        1,
+        channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        bits_per_sample,
+        b'data',
+        data_size,
+    )
+    return header
+
+
+def pcm16_to_float32(pcm_bytes: bytes) -> np.ndarray:
+    """Convert PCM16 bytes to float32 numpy array in [-1, 1]."""
+    samples = np.frombuffer(pcm_bytes, dtype=np.int16)
+    return samples.astype(np.float32) / 32768.0
+
+
+def resolve_ffmpeg() -> str | None:
+    """Locate ffmpeg: the desktop launcher's bundled copy wins over PATH."""
+    import os
+    import shutil
+
+    override = os.environ.get("BACKCHANNEL_FFMPEG")
+    if override and os.path.isfile(override):
+        return override
+    return shutil.which("ffmpeg")
+
+
+def convert_to_pcm16(
+    file_bytes: bytes,
+    source_format: str,
+    *,
+    max_seconds: float | None = None,
+) -> bytes:
+    """Convert audio file bytes to PCM16 16kHz mono using soundfile/ffmpeg."""
+    import io
+    import os
+    import subprocess
+    import tempfile
+
+    # Try soundfile first (handles WAV, FLAC, OGG)
+    try:
+        import soundfile as sf
+        with sf.SoundFile(io.BytesIO(file_bytes)) as source:
+            sr = source.samplerate
+            target_samples = int(max_seconds * 16000) + 1 if max_seconds is not None else None
+            source_frames = ceil(target_samples * sr / 16000) if target_samples is not None else -1
+            data = source.read(frames=source_frames, dtype="int16", always_2d=True)
+        # Mix to mono
+        if data.shape[1] > 1:
+            data = data.mean(axis=1).astype(np.int16)
+        else:
+            data = data[:, 0]
+        # Resample to 16kHz if needed
+        if sr != 16000:
+            # Simple linear resample
+            indices = np.linspace(0, len(data) - 1, int(len(data) * 16000 / sr))
+            data = np.interp(indices, np.arange(len(data)), data.astype(np.float32))
+            data = data.astype(np.int16)
+        return data.tobytes()
+    except Exception:
+        pass
+
+    # Fallback to ffmpeg for formats like m4a, mp3, webm
+    ffmpeg = resolve_ffmpeg()
+    if ffmpeg is None:
+        raise RuntimeError(
+            f"FFmpeg is required to read {source_format} audio but was not "
+            "found on this machine. Install FFmpeg and make sure it is on "
+            "PATH, then restart Backchannel."
+        )
+
+    output_limit = int(max_seconds * 16000) + 1 if max_seconds is not None else None
+    duration_args = ["-t", f"{output_limit / 16000:.8f}"] if output_limit is not None else []
+    input_path = None
+    try:
+        input_arg = "pipe:0"
+        run_options = {"input": file_bytes}
+        normalized_format = source_format.lower().lstrip(".")
+        if normalized_format in {"m4a", "mp4", "mov"}:
+            with tempfile.NamedTemporaryFile(
+                suffix=f".{normalized_format}",
+                delete=False,
+            ) as temp_input:
+                input_path = temp_input.name
+                temp_input.write(file_bytes)
+            input_arg = input_path
+            run_options = {}
+
+        result = subprocess.run(
+            [
+                ffmpeg, "-y", "-i", input_arg,
+                *duration_args,
+                "-ar", "16000", "-ac", "1", "-f", "s16le",
+                "pipe:1",
+            ],
+            capture_output=True,
+            check=True,
+            timeout=60,
+            **run_options,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"FFmpeg timed out while decoding {source_format} audio."
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        lines = (exc.stderr or b"").decode(errors="replace").strip().splitlines()
+        detail = lines[-1] if lines else "unknown ffmpeg error"
+        if input_path:
+            detail = detail.replace(input_path, "temporary input")
+        raise RuntimeError(
+            f"FFmpeg could not decode this {source_format} audio: {detail}"
+        ) from exc
+    finally:
+        if input_path:
+            try:
+                os.unlink(input_path)
+            except FileNotFoundError:
+                pass
+
+    pcm_data = result.stdout[: output_limit * 2 if output_limit is not None else None]
+    if not pcm_data:
+        raise RuntimeError(
+            f"FFmpeg produced no audio while decoding this {source_format} file."
+        )
+    return pcm_data

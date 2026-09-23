@@ -1,0 +1,7 @@
+# 启动：docker compose -f docker-compose.yml -f docker-compose.gewe.example.yml up -d --build
+services:
+  backend:
+    environment:
+      SUITING_WECHAT_DIR: /app/wechat
+    volumes:
+      - ./.local-wechat:/app/wechat

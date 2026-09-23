@@ -1,0 +1,75 @@
+{
+  "retrieved_on": "2026-09-23",
+  "files": [
+    {
+      "file": "Silero-VAD.LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/snakers4/silero-vad/5cd7945676eb32225748052e2e6a0580e4686a08/LICENSE",
+      "resolved_url": "https://raw.githubusercontent.com/snakers4/silero-vad/5cd7945676eb32225748052e2e6a0580e4686a08/LICENSE",
+      "sha256": "2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b",
+      "bytes": 1075
+    },
+    {
+      "file": "WeSpeaker.LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/wenet-e2e/wespeaker/9fecd6cb4f47475d01761d87c826298dff4ef18c/LICENSE",
+      "resolved_url": "https://raw.githubusercontent.com/wenet-e2e/wespeaker/9fecd6cb4f47475d01761d87c826298dff4ef18c/LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "bytes": 11357
+    },
+    {
+      "file": "WeSpeaker-ResNet152-LM.MODEL-CARD.md",
+      "source": "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet152-LM/raw/4adba1525a6c9d5fff74b6df43a6ec97a86c4112/README.md",
+      "resolved_url": "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet152-LM/raw/4adba1525a6c9d5fff74b6df43a6ec97a86c4112/README.md",
+      "sha256": "4bcf87ecfbbb8e07a01b21415a970c8b53a5283bf6872b657040d3f45c9241f7",
+      "bytes": 31
+    },
+    {
+      "file": "Whisper.LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/openai/whisper/86098128c0b4f24f0e2aa2994de830614b474227/LICENSE",
+      "resolved_url": "https://raw.githubusercontent.com/openai/whisper/86098128c0b4f24f0e2aa2994de830614b474227/LICENSE",
+      "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
+      "bytes": 1063
+    },
+    {
+      "file": "Whisper-Base-ONNX.MODEL-CARD.md",
+      "source": "https://huggingface.co/istupakov/whisper-base-onnx/raw/998334d3bfe2deba3c8e6821f05388dbf2b706d2/README.md",
+      "resolved_url": "https://huggingface.co/istupakov/whisper-base-onnx/raw/998334d3bfe2deba3c8e6821f05388dbf2b706d2/README.md",
+      "sha256": "9aae238727ee30349c8851dd0a7c6132e3b451a85e8542d77b7d6bd713556cfc",
+      "bytes": 1272
+    },
+    {
+      "file": "onnx-asr.LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/istupakov/onnx-asr/v0.12.0/LICENSE",
+      "resolved_url": "https://raw.githubusercontent.com/istupakov/onnx-asr/v0.12.0/LICENSE",
+      "sha256": "9313d2b456239c74d90ae38dc665168ccdd01ca74bef93a79e7ee2e5c579b3b6",
+      "bytes": 1070
+    },
+    {
+      "file": "ONNX-Runtime.LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.21.1/LICENSE",
+      "resolved_url": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.21.1/LICENSE",
+      "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+      "bytes": 1073
+    },
+    {
+      "file": "ONNX-Runtime.ThirdPartyNotices.txt",
+      "source": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.21.1/ThirdPartyNotices.txt",
+      "resolved_url": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.21.1/ThirdPartyNotices.txt",
+      "sha256": "8c06e8cff286a4a117b3b246a4c7da68428a144af757823db50e3d6520941ec6",
+      "bytes": 316114
+    },
+    {
+      "file": "PostgreSQL.COPYRIGHT.txt",
+      "source": "https://raw.githubusercontent.com/postgres/postgres/REL_16_4/COPYRIGHT",
+      "resolved_url": "https://raw.githubusercontent.com/postgres/postgres/REL_16_4/COPYRIGHT",
+      "sha256": "9bf20ee493926a7e17a74bc7f05089fbc014269667b1540bc35a6b194a40c9de",
+      "bytes": 1192
+    },
+    {
+      "file": "Apache-2.0.LICENSE.txt",
+      "source": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+      "resolved_url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358
+    }
+  ]
+}

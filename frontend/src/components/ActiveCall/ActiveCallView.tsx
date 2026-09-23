@@ -1,0 +1,442 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { SILENT_AUDIO_LEVEL, type AudioLevelSource } from "../../hooks/useAudioCapture";
+import type { AgentActivitySnapshot, AudioSendStats, ModelInfo, PostProcessingProgress as PostProcessingProgressState, Question, Session, SessionSynthesis, Speaker, StopDrainMode, TranscriptEntry } from "../../types";
+import AgentActivityPanel, { activityEmptyMessage } from "./AgentActivityPanel";
+import AudioIndicator from "./AudioIndicator";
+import DirectiveBar from "./DirectiveBar";
+import PostProcessingProgress from "./PostProcessingProgress";
+import QuestionList from "./QuestionList";
+import SynthesisSignals from "./SynthesisSignals";
+import TranscriptPanel from "./TranscriptPanel";
+
+interface ActiveCallViewProps {
+  session: Session;
+  questions: Question[];
+  transcripts: TranscriptEntry[];
+  onEndCall: (drain?: StopDrainMode) => void;
+  onResumeAudio: () => void;
+  onStarQuestion: (id: string, starred: boolean) => void;
+  onDismissQuestion: (id: string) => void;
+  onVoteQuestion: (id: string, vote: number) => void | Promise<void>;
+  onAddDirective: (text: string) => void;
+  onAsk: (question: string) => void;
+  askModels: ModelInfo[];
+  askModelId: string;
+  onAskModelChange: (id: string) => void;
+  localOnly: boolean;
+  pendingAsk: string | null;
+  askError: string | null;
+  askDisabled: boolean;
+  onMakeDirective?: (question: Question) => void;
+  // Live meter levels, read per animation frame rather than rendered (ALP-291).
+  audioLevel: AudioLevelSource;
+  systemAudioLevel?: AudioLevelSource;
+  systemAudioActive?: boolean;
+  isCapturing: boolean;
+  isStarting: boolean;
+  audioStats: AudioSendStats;
+  backendAudioStatus: string | null;
+  captureError: string | null;
+  status: string;
+  /** The call is being ended: the socket closing is expected, not a fault. */
+  ending?: boolean;
+  callSegmentStart: string | null;
+  speakers: Speaker[];
+  onRenameSpeaker?: (speaker: Speaker, displayName: string) => Promise<void> | void;
+  postProcessing?: PostProcessingProgressState;
+  synthesis: SessionSynthesis | null;
+  activity: AgentActivitySnapshot | null;
+}
+
+function useSessionTimer(startedAt: string | null) {
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (!startedAt) {
+      setElapsed(0);
+      return;
+    }
+    const start = new Date(startedAt).getTime();
+    if (!Number.isFinite(start)) {
+      setElapsed(0);
+      return;
+    }
+
+    function tick() {
+      setElapsed(Math.floor((Date.now() - start) / 1000));
+    }
+
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [startedAt]);
+
+  const hours = Math.floor(elapsed / 3600);
+  const minutes = Math.floor((elapsed % 3600) / 60);
+  const seconds = elapsed % 60;
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+export default function ActiveCallView({
+  session,
+  questions,
+  transcripts,
+  onEndCall,
+  onResumeAudio,
+  onStarQuestion,
+  onDismissQuestion,
+  onVoteQuestion,
+  onAddDirective,
+  onAsk,
+  askModels,
+  askModelId,
+  onAskModelChange,
+  localOnly,
+  pendingAsk,
+  askError,
+  askDisabled,
+  onMakeDirective,
+  audioLevel,
+  systemAudioLevel,
+  systemAudioActive,
+  isCapturing,
+  isStarting,
+  audioStats,
+  backendAudioStatus,
+  captureError,
+  status,
+  ending = false,
+  callSegmentStart,
+  speakers,
+  onRenameSpeaker,
+  postProcessing,
+  synthesis,
+  activity,
+}: ActiveCallViewProps) {
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [transcriptCollapsed, setTranscriptCollapsed] = useState(false);
+  const [endMenuOpen, setEndMenuOpen] = useState(false);
+  const endMenuRef = useRef<HTMLDivElement | null>(null);
+  const debugRef = useRef<HTMLDivElement | null>(null);
+  const timerDisplay = useSessionTimer(callSegmentStart);
+  const postProcessingActive = postProcessing?.active ?? false;
+  // Once the user has ended the call, a closed socket is the expected outcome
+  // rather than a fault, so it must not be reported as one. Raw socket status
+  // only means "connection lost" while the call is genuinely in progress
+  // (ALP-171: End Call showed a lost-connection banner and a Resume prompt for
+  // sixteen seconds while the post-call refreshes were still running).
+  const backendDisconnected =
+    !ending && (status === "disconnected" || status === "error");
+  const audioSeconds = Math.round(audioStats.bytesSent / 32000);
+  const lastAudioAge =
+    audioStats.lastSentAt
+      ? Math.max(0, Math.round((Date.now() - new Date(audioStats.lastSentAt).getTime()) / 1000))
+      : null;
+  const captureStatus = ending
+    ? null
+    : isStarting
+      ? "正在启动音频…"
+      : isCapturing && status === "connected"
+        ? "正在监听"
+        : status === "connecting"
+          ? "正在连接…"
+          : status === "error"
+            ? "连接失败"
+            : status === "disconnected"
+              ? "录音已暂停"
+              : status === "connected"
+                ? "已连接"
+                : status === "idle"
+                  ? "空闲"
+                  : status;
+
+  // Normalize questions: WS-sourced questions may lack starred/dismissed/created_at
+  const normalizedQuestions = useMemo(
+    () =>
+      questions.map((q) => ({
+        ...q,
+        starred: q.starred ?? false,
+        dismissed: q.dismissed ?? false,
+        created_at: q.created_at ?? new Date().toISOString(),
+      })),
+    [questions]
+  );
+
+  useEffect(() => {
+    if (!endMenuOpen) return;
+    function handlePointerDown(event: MouseEvent) {
+      if (endMenuRef.current && !endMenuRef.current.contains(event.target as Node)) {
+        setEndMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [endMenuOpen]);
+
+  useEffect(() => {
+    if (!debugOpen) return;
+    function handlePointerDown(event: MouseEvent) {
+      if (debugRef.current && !debugRef.current.contains(event.target as Node)) {
+        setDebugOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [debugOpen]);
+
+  const emptyInsightMessage = activityEmptyMessage(
+    activity,
+    normalizedQuestions.length > 0,
+  );
+
+  return (
+    <div className="flex h-full flex-col bg-canvas">
+      {/* Top bar */}
+      <header className="flex items-center justify-between gap-4 border-b border-brand-light-gray-1 bg-surface px-4 py-3 md:px-6">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+          <AudioIndicator isCapturing={isCapturing} level={audioLevel} label="麦克风音量" />
+          {systemAudioActive && (
+            <span className="flex items-center gap-1">
+              <span className="font-body text-[10px] text-brand-mid-gray">会议音频</span>
+              <AudioIndicator
+                isCapturing={isCapturing}
+                level={systemAudioLevel ?? SILENT_AUDIO_LEVEL}
+                label="会议音量"
+                showStatusText={false}
+              />
+            </span>
+          )}
+          {/* Only when it says something the meters do not: the mic meter
+              already reads "正在听…" on a healthy call. */}
+          {captureStatus && captureStatus !== "正在监听" && (
+            <span className="font-body text-xs text-brand-mid-gray">{captureStatus}</span>
+          )}
+          {captureError && (
+            <span className="font-body text-xs text-red-600">{captureError}</span>
+          )}
+        </div>
+
+        <div className="flex flex-shrink-0 items-center gap-4">
+          {/* Diagnostics: a quiet icon with its readout in a popover, so a
+              debugging aid never competes with the call for the bar. */}
+          <div className="relative flex" ref={debugRef}>
+            <button
+              type="button"
+              onClick={() => setDebugOpen((open) => !open)}
+              aria-expanded={debugOpen}
+              aria-label="音频诊断"
+              title="音频诊断"
+              className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors focus:ring-2 focus:ring-brand-teal-light ${
+                debugOpen
+                  ? "bg-brand-teal/10 text-brand-teal"
+                  : "text-brand-light-gray-1 hover:bg-brand-light-gray-2 hover:text-brand-mid-gray"
+              }`}
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.75} aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0 0 21 18V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v12a2.25 2.25 0 0 0 2.25 2.25Z" />
+              </svg>
+            </button>
+            {debugOpen && (
+              <div className="absolute right-0 top-full z-20 mt-1 w-80 rounded-lg border border-brand-light-gray-1 bg-surface px-3 py-2 shadow-lg">
+                <p className="font-mono text-[9px] uppercase tracking-wider text-brand-mid-gray">
+                  音频诊断
+                </p>
+                <p className="mt-1 font-body text-xs text-brand-gray">
+                  已发送音频：{audioSeconds} 秒 / {audioStats.chunksSent} 段
+                  {audioStats.chunksDropped > 0 ? `，丢弃 ${audioStats.chunksDropped} 段` : ""}
+                  {lastAudioAge !== null ? `，上次发送于 ${lastAudioAge} 秒前` : ""}
+                </p>
+                {backendAudioStatus && (
+                  <p className="mt-1 break-words font-body text-xs text-brand-mid-gray">
+                    {backendAudioStatus}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+          {!ending && (!isCapturing || status !== "connected") && (
+            <button
+              onClick={onResumeAudio}
+              disabled={postProcessingActive || isStarting}
+              className="rounded-lg border border-brand-teal px-3 py-2 font-body text-sm font-semibold text-brand-teal transition-colors hover:bg-brand-teal/10 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isStarting ? "正在启动…" : "继续录音"}
+            </button>
+          )}
+          {/* Session timer */}
+          <div className={`flex items-center gap-2 ${backendDisconnected ? "opacity-40" : ""}`}>
+            <span className="font-mono text-lg font-semibold tabular-nums text-brand-dark-gray">
+              {timerDisplay}
+            </span>
+            {backendDisconnected && (
+              <span className="font-body text-[10px] font-semibold uppercase tracking-wide text-red-600">
+                未在录音
+              </span>
+            )}
+          </div>
+
+          {/* End Call split button: primary = full drain, menu = skip briefing */}
+          <div className="relative flex" ref={endMenuRef}>
+            <button
+              onClick={() => {
+                setEndMenuOpen(false);
+                onEndCall("full");
+              }}
+              disabled={postProcessingActive}
+              className={`flex items-center gap-2 rounded-l-lg px-4 py-2 font-body text-sm font-semibold text-white transition-colors ${
+                postProcessingActive
+                  ? "cursor-wait bg-brand-mid-gray"
+                  : "bg-red-500 hover:bg-red-600"
+              }`}
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M15.75 3.75L18 6m0 0l2.25 2.25M18 6l2.25-2.25M18 6l-2.25 2.25m-10.5 6v3.75a.75.75 0 01-.75.75H3a.75.75 0 01-.75-.75V15a9.75 9.75 0 019.75-9.75h2.25"
+                />
+              </svg>
+              {postProcessingActive ? "正在结束…" : "结束通话"}
+            </button>
+            <button
+              onClick={() => setEndMenuOpen((open) => !open)}
+              disabled={postProcessingActive}
+              aria-haspopup="menu"
+              aria-expanded={endMenuOpen}
+              aria-label="更多结束选项"
+              className={`flex items-center rounded-r-lg border-l px-2 py-2 text-white transition-colors ${
+                postProcessingActive
+                  ? "cursor-wait border-brand-light-gray-1 bg-brand-mid-gray"
+                  : "border-red-400 bg-red-500 hover:bg-red-600"
+              }`}
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+              </svg>
+            </button>
+            {endMenuOpen && !postProcessingActive && (
+              <div
+                role="menu"
+                className="absolute right-0 top-full z-20 mt-1 w-64 rounded-lg border border-brand-light-gray-1 bg-surface py-1 shadow-lg"
+              >
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setEndMenuOpen(false);
+                    onEndCall("skip_analysis");
+                  }}
+                  className="block w-full px-4 py-2.5 text-left transition-colors hover:bg-brand-light-gray-2"
+                >
+                  <span className="block font-body text-sm font-semibold text-brand-dark-gray">
+                    结束通话，不生成总结
+                  </span>
+                  <span className="mt-0.5 block font-body text-xs text-brand-mid-gray">
+                    保存转录并整理洞察；跳过通话总结和产品匹配。
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <AgentActivityPanel snapshot={activity} />
+      {postProcessing && postProcessingActive && <PostProcessingProgress progress={postProcessing} />}
+      <SynthesisSignals session={session} synthesis={synthesis} />
+      {ending ? (
+        <div className="border-b border-brand-teal/30 bg-brand-teal/10 px-4 py-3 font-body text-sm font-medium text-brand-dark-gray md:px-6">
+          正在收尾：完成会后处理并加载复盘页面……
+        </div>
+      ) : backendDisconnected ? (
+        <div role="alert" className="border-b border-red-200 bg-red-50 px-4 py-3 font-body text-sm font-medium text-red-700 md:px-6">
+          <span className="font-semibold">录音已暂停。</span>{" "}
+          {status === "error"
+            ? "随听 无法连接，请点击“继续录音”重试。"
+            : "随听 连接已断开，请点击“继续录音”重新连接。"}
+        </div>
+      ) : activity?.call.degraded ? (
+        <div role="status" className="border-b border-amber-200 bg-amber-50 px-4 py-3 font-body text-sm font-medium text-amber-900 md:px-6">
+          <span className="font-semibold">
+            {isCapturing ? "录音仍在继续。" : "录音已暂停。"}
+          </span>{" "}
+          {activity.call.degraded_reasons.join(" ")}
+        </div>
+      ) : null}
+
+      {/* Two-column on desktop, stacked on mobile */}
+      <div className={`flex flex-1 flex-col overflow-hidden md:flex-row ${postProcessingActive ? "pointer-events-none opacity-60" : ""}`}>
+        {/* Left column: Questions */}
+        <div className="flex flex-1 flex-col overflow-hidden pt-3">
+          <div className="px-4 pb-2">
+            <h2 className="font-display text-sm font-semibold uppercase tracking-wide text-brand-teal">
+              实时洞察
+            </h2>
+          </div>
+          {(pendingAsk || askError) && (
+            <div className="px-4 pb-2">
+              <div className="rounded-lg border border-brand-light-gray-1 border-l-4 border-l-brand-gray bg-brand-light-gray-2 px-3 py-2">
+                <p className="font-mono text-[9px] uppercase tracking-wider text-brand-gray">
+                  你提的问题
+                </p>
+                <p className="mt-0.5 font-body text-sm font-semibold text-brand-dark-gray">
+                  {pendingAsk}
+                </p>
+                {askError ? (
+                  <p className="mt-1 font-body text-xs text-red-600">{askError}</p>
+                ) : (
+                  <p className="mt-1 font-mono text-[10px] uppercase tracking-wider text-brand-gray">
+                    正在阅读通话内容……
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+          <div className="flex-1 overflow-hidden">
+            <QuestionList
+              questions={normalizedQuestions}
+              showEnhanced={Boolean(session.speaker_context_enhanced_at)}
+              emptyMessage={emptyInsightMessage}
+              onStar={onStarQuestion}
+              onDismiss={onDismissQuestion}
+              onVote={onVoteQuestion}
+              onMakeDirective={onMakeDirective}
+            />
+          </div>
+        </div>
+
+        {/* Right column: Transcript (below insights on mobile), collapsible so
+            the insight list can have the whole screen. */}
+        <div
+          className={`flex min-h-0 w-full flex-shrink-0 flex-col overflow-hidden border-t border-brand-light-gray-1 bg-surface transition-[width] md:h-auto md:border-l md:border-t-0 ${
+            transcriptCollapsed ? "md:w-12" : "h-64 pt-3 md:w-80 xl:w-96"
+          }`}
+        >
+          <TranscriptPanel
+            transcripts={transcripts}
+            speakers={speakers}
+            onRenameSpeaker={onRenameSpeaker}
+            collapsed={transcriptCollapsed}
+            onToggleCollapse={() => setTranscriptCollapsed((open) => !open)}
+          />
+        </div>
+      </div>
+
+      {/* Bottom: Directive bar */}
+      <DirectiveBar
+        onAddDirective={onAddDirective}
+        onAsk={onAsk}
+        models={askModels}
+        modelId={askModelId}
+        onModelChange={onAskModelChange}
+        localOnly={localOnly}
+        asking={Boolean(pendingAsk) && !askError}
+        disabled={postProcessingActive}
+        askDisabled={askDisabled}
+      />
+    </div>
+  );
+}

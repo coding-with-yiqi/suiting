@@ -1,0 +1,234 @@
+import { useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import type {
+  DesktopUpdateController,
+  ModelInfo,
+  ModelPricingResponse,
+  ReleaseNote,
+} from "../types";
+import * as api from "../services/api";
+import { formatPerMinuteRate, formatRate } from "../lib/modelPricing";
+import { DesktopUpdateCard } from "./DesktopUpdate";
+
+interface AboutCardProps {
+  version: string | null;
+  desktopUpdate: DesktopUpdateController;
+  // Version last seen by this browser before an upgrade; releases newer than
+  // it get a "新" badge. Null when there is nothing unread.
+  highlightSince?: string | null;
+}
+
+// Compact capability summary for the Models & pricing table.
+function capabilityLabel(model: ModelInfo): string {
+  const caps = [
+    model.supports_text ? "文字" : null,
+    model.supports_live_audio ? "实时声音" : null,
+    model.supports_batch_audio ? "批量声音" : null,
+  ].filter(Boolean);
+  return caps.length > 0 ? caps.join(", ") : "无";
+}
+
+// True when a is a strictly newer semver than b; malformed input sorts as 0.
+function isNewerVersion(a: string, b: string): boolean {
+  const parse = (v: string) => v.split(".").map((p) => parseInt(p, 10) || 0);
+  const [pa, pb] = [parse(a), parse(b)];
+  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff > 0;
+  }
+  return false;
+}
+
+// Admin -> About tab: current version plus the in-app release-notes history
+// served by /api/meta/release-notes (newest first, newest expanded).
+export default function AboutCard({ version, desktopUpdate, highlightSince }: AboutCardProps) {
+  const [notes, setNotes] = useState<ReleaseNote[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [expandedVersion, setExpandedVersion] = useState<string | null>(null);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [pricing, setPricing] = useState<ModelPricingResponse | null>(null);
+  const [pricingLoading, setPricingLoading] = useState(true);
+  const [pricingFailed, setPricingFailed] = useState(false);
+
+  useEffect(() => {
+    api.listReleaseNotes()
+      .then((n) => {
+        setNotes(n);
+        setExpandedVersion(n[0]?.version ?? null);
+      })
+      .catch((err) => {
+        console.error("Failed to load release notes", err);
+        setFailed(true);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    Promise.all([api.listModels(), api.getModelPricing()])
+      .then(([modelList, pricingResponse]) => {
+        setModels(modelList);
+        setPricing(pricingResponse);
+      })
+      .catch((err) => {
+        console.error("Failed to load model pricing", err);
+        setPricingFailed(true);
+      })
+      .finally(() => setPricingLoading(false));
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl bg-surface p-5 shadow-sm ring-1 ring-brand-light-gray-1/60">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div>
+            <h2 className="font-display text-base font-bold text-brand-dark-gray">随听</h2><p className="font-body text-sm text-brand-gray">基于 <a href="https://github.com/talberthoule/backchannel" target="_blank" rel="noreferrer">Backchannel 开源项目</a> 改造 · 保留原作者 MIT 许可</p><p className="font-body text-sm text-brand-gray"><a href="https://doc.geweapi.com/" target="_blank" rel="noreferrer">GeWe 官方文档</a> · <a href="https://manager.geweapi.com/" target="_blank" rel="noreferrer">GeWe 管理后台</a> · <a href="https://github.com/coding-with-yiqi/suiting/releases" target="_blank" rel="noreferrer">随听下载与更新</a></p>
+            <p className="mt-0.5 font-body text-xs text-brand-gray">
+              实时分析会议：把声音转成文字、区分说话人，并由分析助手找出重点。
+            </p>
+          </div>
+          <span className="rounded-full bg-brand-teal/10 px-3 py-1 font-mono text-sm font-semibold text-brand-teal">
+            {version ? `v${version}` : "版本未知"}
+          </span>
+        </div>
+      </div>
+
+      <DesktopUpdateCard update={desktopUpdate} />
+
+      <section>
+        <div className="mb-3">
+          <h2 className="font-display text-sm font-bold uppercase tracking-wider text-brand-mid-gray">更新说明</h2>
+          <p className="mt-0.5 font-body text-xs text-brand-mid-gray">每个版本有哪些变化，最新版本在最上面。</p>
+        </div>
+
+        {loading && (
+          <p className="font-body text-sm text-brand-mid-gray">正在加载更新说明……</p>
+        )}
+        {failed && (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 font-body text-xs text-amber-900">
+            无法加载更新说明，但软件其他功能不受影响。
+          </p>
+        )}
+
+        <div className="space-y-2">
+          {notes.map((note) => {
+            const expanded = expandedVersion === note.version;
+            const isCurrent = version !== null && note.version === version;
+            const isUnread = !!highlightSince && isNewerVersion(note.version, highlightSince);
+            return (
+              <div key={note.version} className="rounded-xl bg-surface shadow-sm ring-1 ring-brand-light-gray-1/60">
+                <button
+                  type="button"
+                  onClick={() => setExpandedVersion(expanded ? null : note.version)}
+                  aria-expanded={expanded}
+                  className="flex w-full items-center gap-2.5 px-5 py-3 text-left transition-colors hover:bg-brand-light-gray-2/60"
+                >
+                  <svg className={`h-3 w-3 shrink-0 text-brand-mid-gray transition-transform ${expanded ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
+                  <span className="font-mono text-xs font-semibold text-brand-dark-gray">v{note.version}</span>
+                  {isCurrent && (
+                    <span className="rounded-full bg-brand-teal/10 px-2 py-0.5 font-body text-[10px] font-medium text-brand-teal">
+                      当前版本
+                    </span>
+                  )}
+                  {isUnread && (
+                    <span className="rounded-full bg-brand-teal px-2 py-0.5 font-body text-[10px] font-semibold text-white" title={`v${highlightSince} 之后发布`}>
+                      新版本
+                    </span>
+                  )}
+                  <span className="min-w-0 flex-1 truncate font-body text-sm text-brand-gray">{note.title}</span>
+                  <span className="shrink-0 font-body text-[11px] text-brand-mid-gray">{note.date}</span>
+                </button>
+                {expanded && (
+                  <div className="border-t border-brand-light-gray-1/70 px-5 py-4 font-body text-sm text-brand-dark-gray">
+                    <div className="chat-markdown">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{note.body}</ReactMarkdown>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <section>
+        <div className="mb-3">
+          <h2 className="font-display text-sm font-bold uppercase tracking-wider text-brand-mid-gray">模型与价格</h2>
+          <p className="mt-0.5 font-body text-xs text-brand-mid-gray">
+            本软件可用的模型，以及每 100 万个文字标记的美元价格（标准文字价格，不含超长上下文和缓存附加费用）。
+          </p>
+        </div>
+
+        {pricingLoading && (
+          <p className="font-body text-sm text-brand-mid-gray">正在加载模型价格……</p>
+        )}
+        {pricingFailed && (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 font-body text-xs text-amber-900">
+            无法加载模型价格，但软件其他功能不受影响。
+          </p>
+        )}
+
+        {!pricingLoading && !pricingFailed && (
+          <div className="rounded-xl bg-surface shadow-sm ring-1 ring-brand-light-gray-1/60">
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left font-body text-sm">
+                <thead className="text-xs uppercase tracking-wide text-brand-gray">
+                  <tr className="border-b border-brand-light-gray-1/70">
+                    <th scope="col" className="px-5 py-3 font-semibold">模型</th>
+                    <th scope="col" className="px-5 py-3 font-semibold">服务商</th>
+                    <th scope="col" className="px-5 py-3 font-semibold">支持功能</th>
+                    <th scope="col" className="px-5 py-3 text-right font-semibold">输入 / 每百万</th>
+                    <th scope="col" className="px-5 py-3 text-right font-semibold">输出 / 每百万</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-brand-light-gray-1/70">
+                  {models.map((model) => {
+                    const rates = pricing?.models[model.id] ?? null;
+                    const isFree = rates !== null && rates.input_per_million === 0 && rates.output_per_million === 0;
+                    // Billed by audio duration rather than tokens, so the two
+                    // per-1M columns do not apply and a bare "-" would read as
+                    // "no published price" when there is one.
+                    const perMinute =
+                      rates !== null && rates.input_per_million === null && rates.per_minute !== null
+                        ? rates.per_minute
+                        : null;
+                    return (
+                      <tr key={model.id}>
+                        <td className="px-5 py-2.5">
+                          <span className="font-medium text-brand-dark-gray">{model.name}</span>
+                          <span className="ml-2 font-mono text-[11px] text-brand-mid-gray">{model.id}</span>
+                        </td>
+                        <td className="px-5 py-2.5 text-brand-gray">{model.provider}</td>
+                        <td className="px-5 py-2.5 text-xs text-brand-mid-gray">{capabilityLabel(model)}</td>
+                        {isFree ? (
+                          <td colSpan={2} className="px-5 py-2.5 text-right">
+                            <span className="rounded-full bg-brand-teal/10 px-2 py-0.5 text-[11px] font-semibold text-brand-teal">免费</span>
+                          </td>
+                        ) : perMinute !== null ? (
+                          <td colSpan={2} className="px-5 py-2.5 text-right tabular-nums text-brand-gray">
+                            {formatPerMinuteRate(perMinute)}
+                          </td>
+                        ) : (
+                          <>
+                            <td className="px-5 py-2.5 text-right tabular-nums text-brand-gray">{formatRate(rates?.input_per_million)}</td>
+                            <td className="px-5 py-2.5 text-right tabular-nums text-brand-gray">{formatRate(rates?.output_per_million)}</td>
+                          </>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p className="border-t border-brand-light-gray-1/70 px-5 py-3 font-body text-xs text-brand-mid-gray">
+              价格更新于 {pricing?.as_of ?? "未知日期"}；如有变化，请以服务商的价格页面为准。
+            </p>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}

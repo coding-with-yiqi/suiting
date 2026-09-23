@@ -1,0 +1,41 @@
+__pycache__/
+*.pyc
+.env
+node_modules/
+dist/
+build/
+release-assets/
+.vite/
+*.log
+.DS_Store
+pgdata/
+desktop/pgsql/
+desktop/ffmpeg/
+.release-venv/
+
+# Internal marketing strategy docs (not published)
+marketing/
+
+# Per-machine Claude Code / skill installs (not committed)
+.agents/
+.claude/
+skills-lock.json
+.worktrees/
+
+# Private runtime data and downloaded build dependencies
+.venv/
+.local-data/
+backend/data/
+backend/models/*.onnx
+*.key
+*.pem
+gewe.json
+gewe-groups.json
+gewe-receipts/
+launcher.json
+pgpassword
+*.wav
+*.mp3
+*.m4a
+*.zip
+.local-wechat/

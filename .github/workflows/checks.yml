@@ -1,0 +1,35 @@
+name: 检查随听
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+  release-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m compileall -q backend/app desktop scripts
+      - run: python -m unittest discover -s backend/tests -p test_gewe_delivery.py -v
+      - run: python -m unittest discover -s backend/tests -p test_speaker_model_paths.py -v
+      - run: python -m unittest discover -s backend/tests -p test_suiting_release_contract.py -v
+      - run: python -m unittest discover -s backend/tests -p test_chinese_filter.py -v
+      - run: PYTHONPATH=desktop python -m unittest discover -s desktop/tests -p test_launcher.py -v

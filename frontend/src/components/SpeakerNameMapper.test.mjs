@@ -1,0 +1,224 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+import { after, test } from "node:test";
+import { build } from "esbuild";
+
+const componentPath = fileURLToPath(new URL("./SpeakerNameMapper.tsx", import.meta.url));
+const outputDir = await mkdtemp(join(tmpdir(), "speaker-name-mapper-test-"));
+const outputPath = join(outputDir, "bundle.cjs");
+
+await build({
+  stdin: {
+    contents: `
+      import React from "react";
+      import { renderToStaticMarkup } from "react-dom/server";
+      import SpeakerNameMapper, * as speakerModule from "./SpeakerNameMapper.tsx";
+      import { ConfirmProvider } from "./ConfirmProvider.tsx";
+      export const enhancementOutcome = speakerModule.enhancementOutcome;
+      export const enhancementProgressLabel = speakerModule.enhancementProgressLabel;
+      export const enhancementRunModels = speakerModule.enhancementRunModels;
+      export const modelBindingLabel = speakerModule.modelBindingLabel;
+      export const shouldOfferRetry = speakerModule.shouldOfferRetry;
+      export function renderMapper(props) {
+        // The mapper's confirmations use the themed useConfirm() hook, which
+        // requires a ConfirmProvider ancestor.
+        return renderToStaticMarkup(
+          React.createElement(
+            ConfirmProvider,
+            null,
+            React.createElement(SpeakerNameMapper, props),
+          ),
+        );
+      }
+    `,
+    resolveDir: dirname(componentPath),
+    sourcefile: "speaker-name-mapper-test-entry.tsx",
+    loader: "tsx",
+  },
+  bundle: true,
+  format: "cjs",
+  platform: "node",
+  outfile: outputPath,
+});
+
+const {
+  enhancementOutcome,
+  enhancementProgressLabel,
+  enhancementRunModels,
+  modelBindingLabel,
+  renderMapper,
+  shouldOfferRetry,
+} = createRequire(import.meta.url)(outputPath);
+
+after(async () => {
+  await rm(outputDir, { recursive: true, force: true });
+});
+
+const session = {
+  id: "session-1",
+  name: "Meeting",
+  state: "completed",
+  speaker_context_dirty: true,
+  speaker_context_enhanced_at: null,
+};
+const speaker = {
+  id: "speaker-1",
+  session_id: "session-1",
+  name: "Participant with a fully readable long name",
+  role: "",
+  color: "#0d9488",
+  is_user: false,
+  speaker_type: "external",
+  display_name: "Alexandra Example",
+  display_name_enabled: true,
+};
+const noop = () => {};
+
+test("speaker rows render long names in a wrapping layout without truncation classes", () => {
+  const markup = renderMapper({
+    session,
+    speakers: [speaker],
+    onRefresh: noop,
+    onRefreshSession: noop,
+    onRefreshQuestions: noop,
+    onRefreshSynthesis: async () => {},
+    onOpenAdminAgents: noop,
+  });
+
+  assert.match(markup, /Participant with a fully readable long name/);
+  assert.match(markup, /flex-wrap/);
+  assert.doesNotMatch(markup, /\bw-36\b/);
+  assert.doesNotMatch(markup, /\btruncate\b/);
+});
+
+test("model binding and Briefing agent ownership are visible beside a fail-closed control", () => {
+  const markup = renderMapper({
+    session,
+    speakers: [speaker],
+    onRefresh: noop,
+    onRefreshSession: noop,
+    onRefreshQuestions: noop,
+    onRefreshSynthesis: async () => {},
+    onOpenAdminAgents: noop,
+  });
+
+  assert.match(markup, /洞察增强使用总结助手/);
+  assert.match(markup, /打开“管理 → 助手”/);
+  assert.match(markup, /通话总结会使用管理设置中配置的会议分析、探索分析和整理模型/);
+  assert.match(markup, /<button type="button" disabled=""[^>]*>增强洞察<\/button>/);
+});
+
+test("partial and error Briefing outcomes stay retryable and never use success copy", () => {
+  assert.equal(typeof enhancementOutcome, "function");
+
+  for (const briefingStatus of ["partial", "error"]) {
+    const outcome = enhancementOutcome({
+      status: "partial",
+      applied_operations: 2,
+      enhanced_insights: 4,
+      speaker_context_dirty: true,
+      speaker_context_enhanced_at: null,
+      briefing_updated: false,
+      briefing_status: briefingStatus,
+      error: `Briefing revalidation ${briefingStatus}. Retry Enhance Insights.`,
+    });
+
+    assert.equal(outcome.tone, "warning");
+    assert.match(outcome.message, /Retry Enhance Insights/);
+    assert.doesNotMatch(outcome.message, /Revalidated the Briefing and all Insights/);
+  }
+});
+
+test("running revalidation reports observable batch progress", () => {
+  assert.equal(
+    enhancementProgressLabel({
+      status: "running",
+      completed_batches: 2,
+      total_batches: 5,
+    }),
+    "正在重新校验第 2/5 批…",
+  );
+});
+
+test("finished runs never keep an in-progress banner", () => {
+  for (const status of ["completed", "partial", "failed", "unchanged"]) {
+    assert.equal(
+      enhancementProgressLabel({ status, completed_batches: 0, total_batches: 2 }),
+      "",
+      `expected no progress label for status ${status}`,
+    );
+  }
+});
+
+test("only finished-with-failures runs offer the failed-batch retry", () => {
+  assert.equal(shouldOfferRetry(null), false);
+  assert.equal(shouldOfferRetry({ status: "running" }), false);
+  assert.equal(shouldOfferRetry({ status: "completed" }), false);
+  assert.equal(shouldOfferRetry({ status: "unchanged" }), false);
+  assert.equal(shouldOfferRetry({ status: "partial" }), true);
+  assert.equal(shouldOfferRetry({ status: "failed" }), true);
+});
+
+test("failure outcomes surface the persisted run reason", () => {
+  const outcome = enhancementOutcome({
+    status: "partial",
+    briefing_updated: false,
+    briefing_status: "pending",
+    speaker_context_dirty: true,
+    speaker_context_enhanced_at: null,
+    enhanced_insights: 0,
+    error: "1 revalidation batch failed. Gemini quota/spending cap exhausted - raise the cap in AI Studio or switch the model in Admin.",
+  });
+
+  assert.equal(outcome.tone, "warning");
+  assert.match(outcome.message, /Gemini quota\/spending cap exhausted/);
+});
+
+test("the configured Synthesizer model is shown by friendly name and id", () => {
+  assert.equal(
+    modelBindingLabel(
+      [{ slug: "synthesizer", model_id: "gemini-3.5-flash" }],
+      [{ id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" }],
+    ),
+    "Gemini 3.5 Flash (gemini-3.5-flash)",
+  );
+  assert.equal(
+    modelBindingLabel([{ slug: "synthesizer", model_id: "" }], []),
+    "未选择",
+  );
+});
+
+test("latest insight run reports actual fallback models and ignores briefing batches", () => {
+  const summary = enhancementRunModels({
+    batches: [
+      {
+        kind: "insights",
+        requested_model_id: "gemini-3.5-flash",
+        model_id: "endpoint:lab:qwen",
+      },
+      {
+        kind: "briefing",
+        requested_model_id: "brief-meeting",
+        model_id: "brief-arbiter",
+      },
+    ],
+  });
+
+  assert.deepEqual(summary.requested, ["gemini-3.5-flash"]);
+  assert.deepEqual(summary.actual, ["endpoint:lab:qwen"]);
+  assert.equal(summary.usedFallback, true);
+  assert.equal(summary.recorded, true);
+});
+
+test("historical runs without persisted model ids are labelled unrecorded", () => {
+  const summary = enhancementRunModels({
+    batches: [{ kind: "insights", requested_model_id: null, model_id: null }],
+  });
+
+  assert.equal(summary.recorded, false);
+  assert.equal(summary.usedFallback, false);
+});

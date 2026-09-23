@@ -1,0 +1,169 @@
+import { useState } from "react";
+import type { ModelInfo } from "../../types";
+import ModelChip from "./ModelChip";
+
+type Mode = "chat" | "directive";
+
+const MODE_STORAGE_KEY = "backchannel:call-bar-mode";
+
+interface DirectiveBarProps {
+  onAddDirective: (text: string) => void;
+  onAsk: (question: string) => void;
+  models: ModelInfo[];
+  modelId: string;
+  onModelChange: (id: string) => void;
+  localOnly: boolean;
+  asking?: boolean;
+  disabled?: boolean;
+  /** True when this tab is not attached to the live runtime (ALP-178): a
+   * refresh or a second tab can no longer confirm an ask reached the call
+   * it looks like it is asking. Chat-only; Directive is unaffected because
+   * sendDirective already no-ops off-runtime when the socket is closed. */
+  askDisabled?: boolean;
+}
+
+/** The call's command bar.
+ *
+ * Chat is the default because asking is the more frequent act and it should
+ * cost zero clicks; the input is always open for the same reason. Directive
+ * keeps its previous behavior, one toggle away.
+ */
+export default function DirectiveBar({
+  onAddDirective,
+  onAsk,
+  models,
+  modelId,
+  onModelChange,
+  localOnly,
+  asking = false,
+  disabled = false,
+  askDisabled = false,
+}: DirectiveBarProps) {
+  const [mode, setMode] = useState<Mode>(() => {
+    // ponytail: default-first so "chat" reads as the fallback in one glance;
+    // functionally identical to a loadMode() helper (defaults to chat, only
+    // "directive" is ever read back from storage), inlined so a browser that
+    // refuses storage still yields chat with zero indirection.
+    let initial: Mode = "chat";
+    try {
+      if (window.localStorage.getItem(MODE_STORAGE_KEY) === "directive") initial = "directive";
+    } catch {
+      // A browser refusing storage is not a reason to break the bar.
+    }
+    return initial;
+  });
+  const [text, setText] = useState("");
+  const [modelError, setModelError] = useState("");
+
+  const chatMode = mode === "chat";
+
+  function selectMode(next: Mode) {
+    setMode(next);
+    setModelError("");
+    try {
+      window.localStorage.setItem(MODE_STORAGE_KEY, next);
+    } catch {
+      // A browser refusing storage is not a reason to break the bar.
+    }
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = text.trim();
+    if (!trimmed || disabled) return;
+    if (chatMode) {
+      if (askDisabled) return;
+      if (asking) return;
+      if (!modelId) {
+        setModelError("请选择一个模型来提问。带“推荐”的模型更适合入门。");
+        return;
+      }
+      setModelError("");
+      onAsk(trimmed);
+    } else {
+      onAddDirective(trimmed);
+    }
+    setText("");
+  }
+
+  const modeButton = (value: Mode, label: string) => (
+    <button
+      type="button"
+      onClick={() => selectMode(value)}
+      aria-pressed={mode === value}
+      className={`px-2.5 py-1 font-body text-xs font-semibold transition-colors ${
+        mode === value
+          ? value === "chat"
+            ? "bg-brand-gray text-white"
+            : "bg-brand-teal text-white"
+          : "text-brand-mid-gray hover:bg-brand-light-gray-2"
+      }`}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="border-t border-brand-light-gray-1 bg-surface/95 backdrop-blur-sm">
+      <form onSubmit={handleSubmit} className="flex items-center gap-2 px-4 py-2">
+        <div className="flex flex-shrink-0 overflow-hidden rounded-lg border border-brand-light-gray-1">
+          {modeButton("chat", "提问")}
+          {modeButton("directive", "指令")}
+        </div>
+
+        <div
+          className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-2.5 py-1.5 transition-colors ${
+            chatMode
+              ? "border-brand-light-gray-1 bg-brand-light-gray-2 focus-within:border-brand-gray"
+              : "border-brand-light-gray-1 bg-surface focus-within:border-brand-teal"
+          }`}
+        >
+          <input
+            type="text"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={
+              disabled
+                ? "正在处理，请稍候…"
+                : chatMode && askDisabled
+                  ? "继续录音后才能提问…"
+                  : chatMode
+                    ? "想问这场通话什么？"
+                    : "例如：他们的云迁移计划是什么？"
+            }
+            disabled={disabled || (chatMode && askDisabled)}
+            aria-label={chatMode ? "向本场通话提问" : "添加指令"}
+            className="min-w-0 flex-1 bg-transparent font-body text-sm text-brand-dark-gray placeholder:text-brand-mid-gray focus:outline-none"
+          />
+          {asking && (
+            <span className="flex-shrink-0 font-mono text-[10px] uppercase tracking-wider text-brand-mid-gray">
+              正在阅读通话内容…
+            </span>
+          )}
+          {text.trim() && !asking && (
+            <span className="flex-shrink-0 font-mono text-[10px] text-brand-mid-gray" aria-hidden="true">
+              &#8629;
+            </span>
+          )}
+          {chatMode && (
+            <ModelChip
+              models={models}
+              value={modelId}
+              localOnly={localOnly}
+              onChange={(id) => {
+                setModelError("");
+                onModelChange(id);
+              }}
+              role="live_ask"
+            />
+          )}
+        </div>
+      </form>
+      {modelError && (
+        <p role="alert" className="px-4 pb-2 font-body text-xs text-amber-800">
+          {modelError}
+        </p>
+      )}
+    </div>
+  );
+}
