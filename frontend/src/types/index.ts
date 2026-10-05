@@ -822,8 +822,10 @@ export interface AgentActivitySnapshot {
   call: CallHealth;
 }
 
+export type QuestionEventData = Omit<Question, "session_id" | "starred" | "dismissed" | "created_at" | "answered" | "answer_summary" | "needs_followup" | "followup_question"> & { timestamp: string; is_followup?: boolean; item_type?: string };
+
 export type WSMessage =
-  | { type: "question"; data: Omit<Question, "session_id" | "starred" | "dismissed" | "created_at" | "answered" | "answer_summary" | "needs_followup" | "followup_question"> & { timestamp: string; is_followup?: boolean; item_type?: string } }
+  | { type: "question"; data: QuestionEventData }
   | { type: "transcript"; data: TranscriptEntry }
   // The transcript refiner rewrote an entry; replaces the entry with that id.
   | { type: "transcript_updated"; data: TranscriptEntry }

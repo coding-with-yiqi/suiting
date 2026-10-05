@@ -18,6 +18,7 @@ import { useConfirm } from "./components/ConfirmProvider";
 import * as api from "./services/api";
 import { parseSavedDrainSummary } from "./lib/postProcessingSummary";
 import { resolveStoredAskModel } from "./lib/askModelSelection";
+import { appendLiveQuestions } from "./lib/liveQuestions";
 import type { AgentActivitySnapshot, ModelInfo, PostProcessingProgress, Question, Session, SessionGroup, SessionSynthesis, Speaker, StopDrainMode, TranscriptEntry, WSStatusData } from "./types";
 
 function idlePostProcessing(): PostProcessingProgress {
@@ -284,30 +285,9 @@ export default function App() {
 
     for (const msg of newMessages) {
       if (msg.type === "question") {
-        const q: Question = {
-          id: msg.data.id,
-          session_id: messageSessionId,
-          item_type: (msg.data.item_type as any) || "question",
-          lens_label: msg.data.lens_label || "",
-          question: msg.data.question,
-          rationale: msg.data.rationale,
-          source_context: msg.data.source_context,
-          speaker_id: msg.data.speaker_id ?? null,
-          directive_id: msg.data.directive_id,
-          starred: false,
-          dismissed: false,
-          created_at: msg.data.timestamp,
-          answered: false,
-          answer_summary: "",
-          needs_followup: false,
-          followup_question: "",
-          is_followup: msg.data.is_followup || false,
-          agent_source: msg.data.agent_source,
-          offering_match: msg.data.offering_match || "",
-          vote: msg.data.vote ?? 0,
-          enhanced: msg.data.enhanced ?? false,
-        };
-        setLiveQuestions((prev) => [q, ...prev]);
+        // Use one append path for every candidate so multiple websocket
+        // messages arriving in the same React batch all remain visible.
+        setLiveQuestions((prev) => appendLiveQuestions(prev, [msg.data], messageSessionId));
       } else if (msg.type === "question_answered") {
         setLiveQuestions((prev) =>
           prev.map((q) =>
@@ -472,6 +452,18 @@ export default function App() {
   const viewLiveTranscripts = runtimeMatchesView ? liveTranscripts : [];
   const viewRuntimeSynthesis = runtimeMatchesView ? runtimeSynthesis : null;
   const viewRuntimeActivity = runtimeMatchesView ? runtimeActivity : null;
+
+  // WebSocket events are the fast path for live candidates. Keep the saved
+  // list warm as a small recovery path too: if the browser briefly misses a
+  // frame or the app reconnects, candidates that the backend already stored
+  // still appear without waiting for the call to end.
+  useEffect(() => {
+    if (!minimalMode || !runtimeMatchesView || session?.state !== "active") return;
+    const timer = window.setInterval(() => {
+      void refreshQuestions().catch(() => {});
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [minimalMode, refreshQuestions, runtimeMatchesView, session?.state]);
 
   const allQuestions = runtimeMatchesView
     ? session?.state === "completed"

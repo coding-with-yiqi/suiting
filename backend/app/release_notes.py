@@ -10,10 +10,21 @@ Bodies are GitHub-flavored markdown rendered in the Admin -> About tab. Keep
 them user-facing summaries (no download links or repo internals) and ASCII.
 """
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.1"
 
 # Newest first; the first entry's version must equal APP_VERSION.
 RELEASE_NOTES: list[dict] = [
+    {
+        "version": "0.1.1",
+        "date": "2026-10-05",
+        "title": "一场直播，持续生成多条文案",
+        "body": """直播过程中，文案会陆续追加到本场卡片中。
+
+- 每轮根据新的内容生成 0 到 3 条独立候选，生成后逐条显示和保存。
+- 下一轮会参考已生成文案，减少同一亮点反复出现；没有新信息时继续等待。
+- 页面显示候选数量，并补取已保存的文案，减少短暂断线造成的遗漏。
+- 每条仍需人工审核，再选择微信群发送。""",
+    },
     {
         "version": "0.1.0",
         "date": "2026-09-23",

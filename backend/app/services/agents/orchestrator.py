@@ -1394,6 +1394,7 @@ class AgentOrchestrator:
                     doc_summaries=self.doc_summaries,
                     speakers=self.speakers,
                     active_questions=self.active_questions,
+                    board_notes=self._board_stubs,
                 )
 
                 saved_count = 0

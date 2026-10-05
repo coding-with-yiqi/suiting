@@ -37,9 +37,9 @@ export async function saveWritingProfile(style?: string, modelId?: string) {
   const selected = modelId ?? writer.model_id;
   if (!selected) throw new Error("请先在“连接 AI”中选择用于写文案的模型。");
   return api.updateAgent("consolidated_analyst", {
-    model_id: selected, enabled: true, interval_seconds: 45,
+    model_id: selected, enabled: true, interval_seconds: 30,
     prompt: promptWithStyle(style ?? styleFromPrompt(writer?.prompt ?? "")),
-    lenses: JSON.stringify([{ key: "community_post", label: "群转播文案", item_type: "community_post", enabled: true, prompt: "只按主提示词生成群转播文案；没有值得转播的新信息时，items 为空数组。" }]),
+    lenses: JSON.stringify([{ key: "community_post", label: "群转播文案", item_type: "community_post", enabled: true, prompt: "只按主提示词生成群转播文案；一轮可以返回 0 到 3 条互不重复的候选；没有值得转播的新信息时，items 为空数组。" }]),
   });
 }
 export async function prepareRebroadcastSession(sessionId: string) {

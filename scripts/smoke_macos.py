@@ -3,6 +3,7 @@
 --hold-seconds 可为浏览器检查留出时间。退出时停止测试实例。
 """
 import argparse
+import ast
 import json
 import os
 from pathlib import Path
@@ -19,6 +20,10 @@ def main():
     parser.add_argument("--hold-seconds", type=int, default=0)
     parser.add_argument("--state-file", type=Path)
     args = parser.parse_args()
+    versions = ast.parse((Path(__file__).resolve().parents[1] / "backend/app/release_notes.py").read_text())
+    version = next(ast.literal_eval(node.value) for node in versions.body
+                   if isinstance(node, ast.Assign)
+                   and any(isinstance(target, ast.Name) and target.id == "APP_VERSION" for target in node.targets))
     with tempfile.TemporaryDirectory(prefix="suiting-release-check-") as temporary:
         root = Path(temporary)
         env = dict(os.environ, BACKCHANNEL_HEADLESS="1", BACKCHANNEL_DATA_DIR=str(root), SUITING_WECHAT_DIR=str(root / "wechat"))
@@ -48,7 +53,7 @@ def main():
                 with urllib.request.urlopen(req, timeout=45) as response:
                     return json.load(response)
 
-            assert request("/api/meta")["version"] == "0.1.0"
+            assert request("/api/meta")["version"] == version
             assert request("/api/endpoints") == [], "全新安装不应附带模型账号"
             assert request("/api/sessions") == [], "全新安装不应附带会议记录"
             assert request("/api/updates")["enabled"] is False
@@ -64,7 +69,7 @@ def main():
             assert demo["meeting_context"].startswith("本场主题：公开软件演示")
             with urllib.request.urlopen(base + "/", timeout=10) as response:
                 assert "随听" in response.read().decode()
-            print("PASS：空账号/空会议、v0.1.0、语音运行库、停用上游更新、会议信息保存、前端页面。", flush=True)
+            print(f"PASS：空账号/空会议、v{version}、语音运行库、停用上游更新、会议信息保存、前端页面。", flush=True)
             print("说明：语音运行库探测不等于首次模型下载或真实转写验收。", flush=True)
             print(f"浏览器验证地址：{base}", flush=True)
             if args.state_file:

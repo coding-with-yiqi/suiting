@@ -4,6 +4,7 @@
 完整从源码构建的方法见 docs/安装与构建.md。
 """
 import argparse
+import ast
 import importlib.util
 import marshal
 from pathlib import Path
@@ -88,6 +89,10 @@ def main():
     parser.add_argument("--frontend-dist", type=Path, required=True)
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[1]
+    versions = ast.parse((repo / "backend/app/release_notes.py").read_text())
+    version = next(ast.literal_eval(node.value) for node in versions.body
+                   if isinstance(node, ast.Assign)
+                   and any(isinstance(target, ast.Name) and target.id == "APP_VERSION" for target in node.targets))
     if sys.platform != "darwin" or sys.version_info[:2] != (3, 12):
         parser.error("请在 macOS 使用 Python 3.12。")
     if args.output_app.exists() or not args.source_app.is_dir():
@@ -114,7 +119,7 @@ def main():
     shutil.copytree(repo / "third_party_licenses", resources / "third_party_licenses", dirs_exist_ok=True)
     plist = args.output_app / "Contents/Info.plist"
     info = plistlib.loads(plist.read_bytes())
-    info.update(CFBundleName="随听", CFBundleDisplayName="随听", CFBundleIdentifier="com.codingwithyiqi.suiting", CFBundleShortVersionString="0.1.0", CFBundleVersion="0.1.0")
+    info.update(CFBundleName="随听", CFBundleDisplayName="随听", CFBundleIdentifier="com.codingwithyiqi.suiting", CFBundleShortVersionString=version, CFBundleVersion=version)
     plist.write_bytes(plistlib.dumps(info))
     subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(args.output_app)], check=True)
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(args.output_app)], check=True)

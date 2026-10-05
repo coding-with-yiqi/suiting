@@ -107,7 +107,7 @@ export function MinimalWorkspace(props: Props) {
             {props.error && <div className="mr-alert" role="alert"><p>收音或转写需要处理。请查看原因后重试。</p><details><summary>查看原因</summary><p>{props.error}</p></details></div>}
           </section>
           {s.state === "pre_call" && <details className="mr-card" open><summary>本场信息 · 可随时修改</summary><label htmlFor="mr-name">这场的名字</label><input id="mr-name" value={name} onChange={(e) => setName(e.target.value)} /><label htmlFor="mr-context">直播入口、听众和嘉宾称呼</label><textarea id="mr-context" rows={4} value={context} onChange={(e) => setContext(e.target.value)} placeholder="有直播链接或本场背景时粘贴到这里。" /><button disabled={busy || !name.trim()} onClick={() => run(async () => { await props.onRename(name.trim()); await props.onContext(context); setNotice("本场信息已保存。"); })}>保存修改</button></details>}
-          <div className="mr-section-title"><h2>可发群的文案</h2><span className="mr-note">先审核，再选择要发送的群。</span></div>
+          <div className="mr-section-title"><h2>可发群的文案</h2><span className="mr-note" aria-live="polite">{s.state === "active" && props.recording && props.connected ? `已生成 ${posts.length} 条，持续更新中` : posts.length ? `共 ${posts.length} 条候选，先审核，再选择要发送的群。` : "先审核，再选择要发送的群。"}</span></div>
           {props.writingError && <div className="mr-alert" role="alert">{writingErrorMessage(props.writingError)}</div>}
           {posts.length ? posts.map((item) => <CopyCard key={item.id} item={item} onDismiss={props.onDismiss} />) : <section className="mr-card mr-empty"><h3>{s.state === "completed" ? "本场还没有群文案" : "有值得转播的内容，就会出现在这里。"}</h3><p>先记下原话，等事情讲清楚，再写成一条群消息。</p></section>}
           <details className="mr-card"><summary>原文与录音 <span className="mr-note">{props.transcripts.length} 段原文</span></summary>
