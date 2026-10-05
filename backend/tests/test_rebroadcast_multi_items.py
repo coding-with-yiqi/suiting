@@ -17,6 +17,7 @@ class _Session:
     def __init__(self):
         self.added = []
         self.commits = 0
+        self.executed = []
 
     async def __aenter__(self):
         return self
@@ -29,6 +30,9 @@ class _Session:
 
     async def commit(self):
         self.commits += 1
+
+    async def execute(self, statement):
+        self.executed.append(statement)
 
     async def refresh(self, item):
         if item.created_at is None:
@@ -142,6 +146,24 @@ class MultiCandidateTests(unittest.IsolatedAsyncioTestCase):
             ["第一条", "第二条"],
             [row["text"] for row in seen_board_notes[2]],
         )
+
+    async def test_new_post_consumes_ignored_fragments_once(self):
+        websocket = AsyncMock()
+        db = _Session()
+        orchestrator = _orchestrator(websocket)
+        old_id = str(uuid4())
+        orchestrator._deferred_posts = [{"id": old_id, "text": "旧的群文案"}]
+        with patch(
+            "app.services.agents.orchestrator.async_session",
+            return_value=db,
+        ):
+            saved = await orchestrator._save_and_send_insight(
+                {"item_type": "community_post", "question": "合并后的新文案"},
+                agent_source="consolidated_analyst",
+            )
+        self.assertTrue(saved)
+        self.assertEqual([], orchestrator._deferred_posts)
+        self.assertIn("delivery_state", str(db.executed[0]))
 
 
 if __name__ == "__main__":

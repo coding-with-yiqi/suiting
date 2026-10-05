@@ -10,6 +10,7 @@ from app.database import get_db
 from app.models import Question
 from app.schemas import QuestionOut, QuestionUpdate
 from app.services import gewe
+from app.services.agents.orchestrator import get_live_orchestrator
 
 router = APIRouter(prefix="/api/sessions/{session_id}/questions", tags=["questions"])
 
@@ -35,10 +36,19 @@ async def update_question(
         question.starred = body.starred
     if body.dismissed is not None:
         question.dismissed = body.dismissed
+        if question.item_type == "community_post":
+            question.delivery_state = "ignored" if body.dismissed else "pending"
     if body.vote is not None:
         question.vote = body.vote
     await db.commit()
     await db.refresh(question)
+    if question.item_type == "community_post":
+        orchestrator = get_live_orchestrator(session_id)
+        if orchestrator:
+            if question.dismissed:
+                orchestrator.defer_community_post(str(question.id), question.question)
+            else:
+                orchestrator.forget_deferred_post(str(question.id), question.question)
     return question
 
 
@@ -61,6 +71,14 @@ def _review_origin(request):
     origin = request.headers.get("origin")
     if request.headers.get("x-rebroadcast-review") != "1" or (origin and origin != str(request.base_url).rstrip("/")):
         raise HTTPException(403, "请从本机的文案审核窗口操作。")
+
+
+def _all_delivery_receipts_confirmed(receipts: dict) -> bool:
+    """A candidate is final only when every selected target says sent."""
+    return bool(receipts) and all(
+        isinstance(receipt, dict) and receipt.get("state") == "sent"
+        for receipt in receipts.values()
+    )
 
 
 @router.get("/{question_id}/wechat")
@@ -86,6 +104,16 @@ async def send_to_wechat(session_id: uuid.UUID, question_id: uuid.UUID, body: We
     if question.question != body.content:
         raise HTTPException(409, "正文已有变化，请保存修改后重新审核。")
     try:
-        return await gewe.send_reviewed(question_id, body.content, body.targets)
+        receipts = await gewe.send_reviewed(question_id, body.content, body.targets)
     except gewe.GeweError as exc:
         raise HTTPException(502, str(exc)) from None
+    # Keep a sent candidate visible in history, but stop treating it as a
+    # fragment for the next generated post once every selected target has
+    # confirmed delivery. Partial or unknown results remain retryable.
+    if _all_delivery_receipts_confirmed(receipts):
+        question.delivery_state = "sent"
+        await db.commit()
+        orchestrator = get_live_orchestrator(session_id)
+        if orchestrator:
+            orchestrator.forget_deferred_post(str(question.id), question.question)
+    return receipts

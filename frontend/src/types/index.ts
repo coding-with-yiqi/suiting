@@ -141,6 +141,8 @@ export interface Question {
   directive_id: string | null;
   starred: boolean;
   dismissed: boolean;
+  /** Community-post review state; older servers may omit it. */
+  delivery_state?: "pending" | "ignored" | "merged" | "sent";
   created_at: string;
   answered: boolean;
   answer_summary: string;

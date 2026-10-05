@@ -17,7 +17,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 
 from fastapi import WebSocket
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.config import settings
 from app.database import async_session
@@ -97,6 +97,8 @@ _MAX_ACTIVE_QUESTIONS = 24
 # prompt cost on long calls: 48 stubs at 110 chars is roughly 1.5k tokens.
 _MAX_BOARD_STUBS = 48
 _BOARD_STUB_CHARS = 110
+_MAX_DEFERRED_POSTS = 24
+_DEFERRED_POST_CHARS = 600
 ProgressCallback = Callable[[dict[str, object]], Awaitable[None]]
 
 # Drain modes for call finalization: "full" runs every post-call stage,
@@ -247,6 +249,7 @@ class AgentOrchestrator:
         local_only: bool = False,
         admitted_models: set[str] | None = None,
         board_stubs: list[dict] | None = None,
+        deferred_posts: list[dict] | None = None,
         audio_local_only: bool = False,
     ):
         self.session_id = session_id
@@ -505,6 +508,13 @@ class AgentOrchestrator:
             self._remember_board_stub(
                 str(note.get("item_type") or "insight"),
                 str(note.get("text") or ""),
+                str(note.get("id") or "") or None,
+            )
+        self._deferred_posts: list[dict] = []
+        for post in deferred_posts or []:
+            self._remember_deferred_post(
+                str(post.get("text") or ""),
+                str(post.get("id") or "") or None,
             )
 
     def briefing_enabled(self) -> bool:
@@ -636,17 +646,56 @@ class AgentOrchestrator:
             return
         self.active_questions[:] = [aq for aq in self.active_questions if aq["id"] != item_id]
 
-    def _remember_board_stub(self, item_type: str, text: str):
+    def _remember_board_stub(self, item_type: str, text: str, item_id: str | None = None):
         """Track a non-question insight so the analyst stops restating it."""
         text = text.strip()
         if not text:
             return
         if len(text) > _BOARD_STUB_CHARS:
             text = text[:_BOARD_STUB_CHARS].rstrip() + "..."
-        self._board_stubs.append({"item_type": item_type, "text": text})
+        self._board_stubs.append({"id": item_id, "item_type": item_type, "text": text})
         overflow = len(self._board_stubs) - _MAX_BOARD_STUBS
         if overflow > 0:
             del self._board_stubs[:overflow]
+
+    def _remember_deferred_post(self, text: str, item_id: str | None = None):
+        """Keep an ignored community post for the next generated candidate."""
+        text = text.strip()
+        if not text:
+            return
+        if len(text) > _DEFERRED_POST_CHARS:
+            text = text[:_DEFERRED_POST_CHARS].rstrip() + "..."
+        if item_id and any(post.get("id") == item_id for post in self._deferred_posts):
+            return
+        if any(post.get("text") == text for post in self._deferred_posts):
+            return
+        self._deferred_posts.append({"id": item_id, "text": text})
+        overflow = len(self._deferred_posts) - _MAX_DEFERRED_POSTS
+        if overflow > 0:
+            del self._deferred_posts[:overflow]
+
+    def defer_community_post(self, item_id: str | None, text: str):
+        """Move a dismissed candidate from the board into the merge queue."""
+        normalized = text.strip()
+        self._board_stubs[:] = [
+            note for note in self._board_stubs
+            if not (
+                (item_id and note.get("id") == item_id)
+                or (normalized and note.get("text") == normalized)
+            )
+        ]
+        self._remember_deferred_post(text, item_id)
+
+    def forget_deferred_post(self, item_id: str | None, text: str | None = None):
+        """Drop a candidate after its reviewed content has been sent."""
+        normalized = (text or "").strip()
+        self._deferred_posts[:] = [
+            post for post in self._deferred_posts
+            if not (
+                (item_id and post.get("id") == item_id)
+                or (normalized and post.get("text") == normalized)
+            )
+        ]
 
     def _derive_meeting_context(self):
         """Recompute the fields derived from meeting_type/meeting_context."""
@@ -956,6 +1005,7 @@ class AgentOrchestrator:
                 speakers=self.speakers,
                 active_questions=self.active_questions,
                 board_notes=self._board_stubs,
+                deferred_posts=self._deferred_posts,
             )
 
             for insight in insights:
@@ -1229,14 +1279,32 @@ class AgentOrchestrator:
                 directive_id=directive_id,
                 agent_source=effective_source,
             )
+            merged_post_ids = [
+                post.get("id") for post in self._deferred_posts
+                if post.get("id")
+            ] if question.item_type == "community_post" else []
             db.add(question)
+            if merged_post_ids:
+                await db.execute(
+                    update(Question)
+                    .where(Question.id.in_(merged_post_ids))
+                    .values(delivery_state="merged")
+                )
             await db.commit()
             await db.refresh(question)
+
+            if merged_post_ids:
+                # The new candidate has absorbed the ignored fragments. Keep
+                # them in history, but do not send them into another cycle.
+                self._deferred_posts[:] = [
+                    post for post in self._deferred_posts
+                    if post.get("id") not in merged_post_ids
+                ]
 
             if question.item_type == "question":
                 self._remember_active_question(str(question.id), question.question, question.item_type)
             else:
-                self._remember_board_stub(question.item_type, question.question)
+                self._remember_board_stub(question.item_type, question.question, str(question.id))
 
             try:
                 await self.websocket.send_json({
@@ -1255,6 +1323,7 @@ class AgentOrchestrator:
                         "agent_source": effective_source,
                         "offering_match": "",
                         "enhanced": False,
+                        "delivery_state": question.delivery_state,
                     },
                 })
             except Exception as e:
@@ -1395,6 +1464,7 @@ class AgentOrchestrator:
                     speakers=self.speakers,
                     active_questions=self.active_questions,
                     board_notes=self._board_stubs,
+                    deferred_posts=self._deferred_posts,
                 )
 
                 saved_count = 0

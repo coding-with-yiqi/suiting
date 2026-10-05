@@ -279,6 +279,11 @@ class Question(Base):
     directive_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(), ForeignKey("directives.id"), nullable=True)
     starred: Mapped[bool] = mapped_column(Boolean, default=False)
     dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Community-post candidates can be ignored and folded into a later
+    # candidate, marked merged after that happens, or confirmed as sent.
+    # Other insight types keep the default value and do not participate in
+    # rebroadcast merging.
+    delivery_state: Mapped[str] = mapped_column(String(20), default="pending")
     answered: Mapped[bool] = mapped_column(Boolean, default=False)
     answer_summary: Mapped[str] = mapped_column(Text, default="")
     needs_followup: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -7,6 +7,7 @@ import "./minimal.css";
 import { WechatReview } from "./WechatReview";
 import { NewBroadcast } from "./NewBroadcast";
 import { ModelConnection } from "./ModelConnection";
+import { splitRebroadcastPosts } from "../../lib/rebroadcastQueue";
 
 type Page = "current" | "history" | "style" | "connect";
 interface Props {
@@ -53,12 +54,15 @@ function CopyCard({ item, onDismiss }: { item: Question; onDismiss: Props["onDis
     } catch { setNote("保存失败，修改还在这里。请重试，或先复制文案。"); }
     finally { setSaving(false); }
   }
-  return <article className="mr-card mr-copy"><div className="mr-eyebrow">候选文案 · {time(item.created_at)}</div>
+  const ignored = item.dismissed;
+  const merged = item.delivery_state === "merged";
+  return <article className={`mr-card mr-copy${ignored ? " mr-copy-ignored" : ""}`}><div className="mr-eyebrow">候选文案 · {time(item.created_at)}</div>
+    {ignored && <p className="mr-review-status" role="status">{merged ? "已并入下一条文案" : "已忽略 · 等待并入下一条文案"}</p>}
     {editing ? <textarea aria-label="修改文案" value={text} disabled={saving} maxLength={12000} onChange={(e) => setText(e.target.value)} rows={8} /> : <p className="mr-copy-text">{text}</p>}
     <div className="mr-actions"><button className="mr-primary" onClick={copy}>复制文案</button>
-      <button disabled={editing || saving || !text.trim()} onClick={() => setReviewing(true)}>审核并发送</button>
-      <button disabled={saving || (editing && !text.trim())} onClick={() => editing ? save() : setEditing(true)}>{saving ? "正在保存…" : editing ? "保存修改" : "修改"}</button>
-      <button className="mr-text-button" onClick={() => void onDismiss(item.id).catch(() => setNote("暂时没能移除，请重试。"))}>移除候选</button></div>
+      {!ignored && <button disabled={editing || saving || !text.trim()} onClick={() => setReviewing(true)}>发送</button>}
+      <button disabled={saving || (editing && !text.trim()) || ignored} onClick={() => editing ? save() : setEditing(true)}>{saving ? "正在保存…" : editing ? "保存修改" : "修改"}</button>
+      {!ignored && <button className="mr-text-button" disabled={editing || saving} onClick={() => void onDismiss(item.id).catch(() => setNote("暂时没能忽略，请重试。"))}>忽略并合并</button>}</div>
     <div role="status" className="mr-note">{note}</div>
     {item.source_context && <details><summary>查看对应原文</summary><p>{item.source_context}</p></details>}
     {reviewing && <WechatReview sessionId={item.session_id} questionId={item.id} text={text} onClose={() => setReviewing(false)} />}
@@ -89,7 +93,7 @@ export function MinimalWorkspace(props: Props) {
   const [notice, setNotice] = useState(""); const [name, setName] = useState(""); const [context, setContext] = useState("");
   const s = props.session; const active = props.recording || props.sessions.some((session) => session.state === "active");
   useEffect(() => { setName(s?.name ?? ""); setContext(s?.meeting_context ?? ""); }, [s?.id]);
-  const posts = props.questions.filter((q) => q.item_type === "community_post" && !q.dismissed);
+  const { pending: posts, ignored: ignoredPosts, merged: mergedPosts } = splitRebroadcastPosts(props.questions);
   async function run(operation: () => Promise<void>) {
     setBusy(true); setNotice(""); try { await operation(); } catch { setNotice("操作暂时没完成，请确认本机程序仍在运行后重试。"); } finally { setBusy(false); }
   }
@@ -110,6 +114,8 @@ export function MinimalWorkspace(props: Props) {
           <div className="mr-section-title"><h2>可发群的文案</h2><span className="mr-note" aria-live="polite">{s.state === "active" && props.recording && props.connected ? `已生成 ${posts.length} 条，持续更新中` : posts.length ? `共 ${posts.length} 条候选，先审核，再选择要发送的群。` : "先审核，再选择要发送的群。"}</span></div>
           {props.writingError && <div className="mr-alert" role="alert">{writingErrorMessage(props.writingError)}</div>}
           {posts.length ? posts.map((item) => <CopyCard key={item.id} item={item} onDismiss={props.onDismiss} />) : <section className="mr-card mr-empty"><h3>{s.state === "completed" ? "本场还没有群文案" : "有值得转播的内容，就会出现在这里。"}</h3><p>先记下原话，等事情讲清楚，再写成一条群消息。</p></section>}
+          {ignoredPosts.length > 0 && <section aria-label="已忽略、等待合并的文案"><div className="mr-section-title mr-ignored-title"><h3>已忽略，等待并入下一条</h3><span className="mr-note">{ignoredPosts.length} 条</span></div>{ignoredPosts.map((item) => <CopyCard key={item.id} item={item} onDismiss={props.onDismiss} />)}</section>}
+          {mergedPosts.length > 0 && <details className="mr-card mr-merged"><summary>已并入下一条文案 <span className="mr-note">{mergedPosts.length} 条</span></summary>{mergedPosts.map((item) => <CopyCard key={item.id} item={item} onDismiss={props.onDismiss} />)}</details>}
           <details className="mr-card"><summary>原文与录音 <span className="mr-note">{props.transcripts.length} 段原文</span></summary>
             {props.segments.filter((segment) => segment.audio_path && segment.ended_at).map((segment) => <div className="mr-audio" key={segment.id}><p>录音 {segment.segment_number}</p><audio controls preload="none" src={`/api/sessions/${s.id}/segments/${segment.segment_number}/audio`} /><a download href={`/api/sessions/${s.id}/segments/${segment.segment_number}/audio`}>保存录音</a></div>)}
             {!props.transcripts.length && <p className="mr-note">还没有转写文字。</p>}{props.transcripts.map((entry, index) => <p className="mr-transcript" key={entry.id ?? index}><time>{time(entry.timestamp)}</time>{entry.text}</p>)}

@@ -17,6 +17,7 @@ export function questionFromEvent(data: QuestionEventData, sessionId: string): Q
     directive_id: data.directive_id,
     starred: false,
     dismissed: false,
+    delivery_state: data.delivery_state ?? "pending",
     created_at: data.timestamp || new Date().toISOString(),
     answered: false,
     answer_summary: "",

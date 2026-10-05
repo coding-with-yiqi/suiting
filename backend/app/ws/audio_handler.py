@@ -650,7 +650,25 @@ async def _audio_websocket(websocket: WebSocket, session_id: uuid.UUID):
                 # to the strategic-signals agent) and so do the user's own
                 # asked answers. Truncation and the cap are applied by the
                 # orchestrator's _remember_board_stub.
-                board_stubs.append({"item_type": q.item_type, "text": q.question})
+                board_stubs.append({"id": str(q.id), "item_type": q.item_type, "text": q.question})
+
+        # An ignored community post is a draft fragment, not a final
+        # rejection: feed it into the next analyst cycle so the new candidate
+        # can combine it with the latest transcript.  A successfully sent
+        # candidate is deliberately excluded by delivery_state.
+        deferred_result = await db.execute(
+            select(Question).where(
+                Question.session_id == session_id,
+                Question.item_type == "community_post",
+                Question.dismissed.is_(True),
+                Question.delivery_state.notin_(("sent", "merged")),
+            )
+        )
+        deferred_posts = [
+            {"id": str(q.id), "text": q.question}
+            for q in deferred_result.scalars().all()
+            if q.question.strip()
+        ]
 
         # Load speakers for agent context
         result = await db.execute(
@@ -706,6 +724,7 @@ async def _audio_websocket(websocket: WebSocket, session_id: uuid.UUID):
         local_only=local_only,
         admitted_models=admitted_models,
         board_stubs=board_stubs,
+        deferred_posts=deferred_posts,
         audio_local_only=audio_local_only,
     )
 

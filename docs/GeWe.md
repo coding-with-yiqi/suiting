@@ -68,7 +68,7 @@ docker compose -f docker-compose.yml -f docker-compose.gewe.example.yml up -d --
 **不用手工填写群号。** 按这个顺序操作：
 
 1. 在手机微信里打开想发送的群，进入群设置，开启“保存到通讯录”。
-2. 回到随听，在文案卡片上点“审核并发送”，再点“刷新群列表”。
+2. 回到随听，在文案卡片上点“发送”，再点“刷新群列表”。
 3. 随听向 GeWe 请求 `contacts/fetchContactsList`，取得 `chatrooms` 中以 `@chatroom` 结尾的内部群 ID；再用 `contacts/getBriefInfo` 匹配群名。
 4. 界面按群名供你选择。内部群 ID 由程序处理，**和文案中的腾讯会议号没有关系**。
 
@@ -79,7 +79,7 @@ docker compose -f docker-compose.yml -f docker-compose.gewe.example.yml up -d --
 随听不会自动把新生成的文案推送到群里。
 
 1. 阅读文案，需要时修改并保存。
-2. 点“审核并发送”，核对完整正文，勾选目标群。
+2. 点“发送”，核对完整正文，勾选目标群。
 3. 勾选“我已核对正文和发送目标”，再点“确认发送”。
 
 第一次建议只选“文件传输助手（先发给自己）”验证。实际群发送需要你自己勾选，不会因刷新、打开弹窗或生成新文案而发送。

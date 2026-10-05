@@ -222,6 +222,7 @@ class ConsolidatedAnalystAgent:
         speakers: list[dict],
         active_questions: list[dict] | None = None,
         board_notes: list[dict] | None = None,
+        deferred_posts: list[dict] | None = None,
     ) -> list[dict]:
         """Execute one analysis cycle. Returns list of insight dicts with item_type and agent_source."""
         directives_text = "\n".join(f"- {d}" for d in directives) if directives else "(No directives set)"
@@ -248,6 +249,18 @@ class ConsolidatedAnalystAgent:
                 " any of these in any wording; only add what is genuinely"
                 " new):\n" + notes_text
             )
+        if deferred_posts:
+            deferred_text = "\n".join(
+                f'- {post.get("text") or ""}'
+                for post in deferred_posts
+                if str(post.get("text") or "").strip()
+            )
+            if deferred_text:
+                aq_text += (
+                    "\n\n待合并的群文案（这些文案之前被人工忽略，下一条 community_post "
+                    "要吸收其中仍然有价值的信息，并和本轮新内容合成一条完整文案；"
+                    "不要原样重复，也不要单独再次输出旧文案）：\n" + deferred_text
+                )
 
         # Instructions go out as instructions; the user turn is this cycle's
         # data. About half of every call is byte-identical to the last one,

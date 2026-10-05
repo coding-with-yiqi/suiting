@@ -118,6 +118,10 @@ async def _add_missing_columns(conn):
                 connection.execute(
                     text("ALTER TABLE questions ADD COLUMN enhanced BOOLEAN NOT NULL DEFAULT false")
                 )
+            if "delivery_state" not in columns:
+                connection.execute(
+                    text("ALTER TABLE questions ADD COLUMN delivery_state VARCHAR(20) NOT NULL DEFAULT 'pending'")
+                )
             if "lens_label" not in columns:
                 connection.execute(
                     text("ALTER TABLE questions ADD COLUMN lens_label VARCHAR(120) NOT NULL DEFAULT ''")

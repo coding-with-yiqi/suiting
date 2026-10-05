@@ -10,10 +10,21 @@ Bodies are GitHub-flavored markdown rendered in the Admin -> About tab. Keep
 them user-facing summaries (no download links or repo internals) and ASCII.
 """
 
-APP_VERSION = "0.1.1"
+APP_VERSION = "0.1.2"
 
 # Newest first; the first entry's version must equal APP_VERSION.
 RELEASE_NOTES: list[dict] = [
+    {
+        "version": "0.1.2",
+        "date": "2026-10-05",
+        "title": "忽略的文案会并入下一条",
+        "body": """直播中的群文案继续逐条生成，并增加了人工取舍后的合并流程。
+
+- 每条候选都有“发送”和“忽略并合并”两个明确入口。
+- 忽略的文案会保留在本场记录，并在下一条新的群文案中作为待合并内容参考。
+- 新文案吸收旧文案后，旧卡片会标为“已并入下一条”，不会在后续每一轮重复注入。
+- 只有所选群全部确认发送后，候选才会标为已发送；部分失败或结果不确定时仍可人工核对。""",
+    },
     {
         "version": "0.1.1",
         "date": "2026-10-05",

@@ -172,6 +172,20 @@ class BoardStubTests(unittest.TestCase):
             )
         self.assertEqual(_MAX_BOARD_STUBS, len(orchestrator._board_stubs))
 
+    def test_ignored_post_moves_from_board_to_deferred_queue(self):
+        self.orchestrator._remember_board_stub("community_post", "旧的群文案", "post-1")
+        self.orchestrator.defer_community_post("post-1", "旧的群文案")
+        self.assertEqual([], self.orchestrator._board_stubs)
+        self.assertEqual(
+            [{"id": "post-1", "text": "旧的群文案"}],
+            self.orchestrator._deferred_posts,
+        )
+
+    def test_sent_post_leaves_deferred_queue(self):
+        self.orchestrator._remember_deferred_post("旧的群文案", "post-1")
+        self.orchestrator.forget_deferred_post("post-1", "旧的群文案")
+        self.assertEqual([], self.orchestrator._deferred_posts)
+
 
 class AnalystBoardContextTests(unittest.IsolatedAsyncioTestCase):
     """The stub list reaches the analyst prompt through {active_questions}, so
@@ -216,6 +230,14 @@ class AnalystBoardContextTests(unittest.IsolatedAsyncioTestCase):
         prompt = await self._prompt_for(active_questions=[], board_notes=[])
         self.assertIn("(No questions suggested yet)", prompt)
         self.assertNotIn("Other insights already captured", prompt)
+
+    async def test_deferred_posts_are_explicitly_marked_for_merging(self):
+        prompt = await self._prompt_for(
+            deferred_posts=[{"id": "post-1", "text": "被忽略的上一条文案"}],
+        )
+        self.assertIn("待合并的群文案", prompt)
+        self.assertIn("被忽略的上一条文案", prompt)
+        self.assertIn("合成一条完整文案", prompt)
 
 
 if __name__ == "__main__":

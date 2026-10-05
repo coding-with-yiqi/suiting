@@ -144,6 +144,7 @@ class QuestionOut(BaseModel):
     offering_match: str = ""
     vote: int = 0
     enhanced: bool = False
+    delivery_state: str = "pending"
 
     model_config = {"from_attributes": True}
 
