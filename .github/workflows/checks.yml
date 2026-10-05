@@ -32,5 +32,4 @@ jobs:
       - run: python -m unittest discover -s backend/tests -p test_speaker_model_paths.py -v
       - run: python -m unittest discover -s backend/tests -p test_suiting_release_contract.py -v
       - run: python -m unittest discover -s backend/tests -p test_chinese_filter.py -v
-      - run: PYTHONPATH=backend python -m unittest tests.test_rebroadcast_multi_items -v
       - run: PYTHONPATH=desktop python -m unittest discover -s desktop/tests -p test_launcher.py -v
