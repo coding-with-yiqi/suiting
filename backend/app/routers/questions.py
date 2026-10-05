@@ -37,7 +37,10 @@ async def update_question(
     if body.dismissed is not None:
         question.dismissed = body.dismissed
         if question.item_type == "community_post":
-            question.delivery_state = "ignored" if body.dismissed else "pending"
+            if body.dismissed and question.delivery_state not in ("sent", "merged"):
+                question.delivery_state = "ignored"
+            elif not body.dismissed and question.delivery_state == "ignored":
+                question.delivery_state = "pending"
     if body.vote is not None:
         question.vote = body.vote
     await db.commit()
@@ -45,7 +48,7 @@ async def update_question(
     if question.item_type == "community_post":
         orchestrator = get_live_orchestrator(session_id)
         if orchestrator:
-            if question.dismissed:
+            if question.dismissed and question.delivery_state == "ignored":
                 orchestrator.defer_community_post(str(question.id), question.question)
             else:
                 orchestrator.forget_deferred_post(str(question.id), question.question)
