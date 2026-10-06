@@ -104,6 +104,47 @@ def _targets(config):
     return [{"id": "filehelper", "name": "文件传输助手（先发给自己）"}, *groups]
 
 
+def _default_targets_path(config):
+    """The selected target ids live beside the local GeWe group cache.
+
+    Keep this separate from ``gewe.json`` so changing a sending preference
+    never rewrites the file containing the user's token.  The app id scopes
+    the selection to the connected WeChat account.
+    """
+    return config["_directory"] / "gewe-default-targets.json"
+
+
+def _default_target_ids(config, targets=None):
+    saved = _read(_default_targets_path(config), {})
+    if saved.get("app_id") != config["app_id"]:
+        return []
+    raw_ids = saved.get("target_ids", [])
+    if not isinstance(raw_ids, list):
+        return []
+    allowed = {target["id"] for target in (targets or _targets(config))}
+    return list(dict.fromkeys(target for target in raw_ids if isinstance(target, str) and target in allowed))
+
+
+def _has_saved_default_targets(config):
+    saved = _read(_default_targets_path(config), {})
+    return saved.get("app_id") == config["app_id"] and isinstance(saved.get("target_ids"), list)
+
+
+def _save_default_target_ids(config, target_ids):
+    allowed = {target["id"] for target in _targets(config)}
+    normalized = []
+    for target in target_ids:
+        if not isinstance(target, str) or target not in allowed:
+            raise GeweError("默认发送目标已变化，请重新选择微信群。")
+        if target not in normalized:
+            normalized.append(target)
+    _write(
+        _default_targets_path(config),
+        {"app_id": config["app_id"], "target_ids": normalized},
+    )
+    return normalized
+
+
 def _version(config, content):
     return hashlib.sha256((config["app_id"] + "\0" + content).encode()).hexdigest()
 
@@ -119,7 +160,25 @@ def review(question_id, content):
     except GeweError:
         return {"configured": False, "targets": [], "receipts": {}}
     receipts = _read(_receipt_path(question_id, config), {}).get(_version(config, content), {})
-    return {"configured": True, "targets": _targets(config), "receipts": receipts}
+    targets = _targets(config)
+    return {
+        "configured": True,
+        "targets": targets,
+        "default_targets": _default_target_ids(config, targets),
+        "receipts": receipts,
+    }
+
+
+def save_default_targets(target_ids):
+    """Persist the reviewed target selection for this connected account."""
+    config = _config()
+    return _save_default_target_ids(config, target_ids)
+
+
+def clear_default_targets():
+    """Forget the default selection without touching group or account data."""
+    config = _config()
+    return _save_default_target_ids(config, [])
 
 
 async def refresh_groups():
@@ -149,6 +208,11 @@ async def send_reviewed(question_id, content, targets):
         raise GeweError("发送目标已变化，请重新选择并审核。")
     if not content.strip():
         raise GeweError("文案不能为空。")
+    # The first reviewed selection becomes the default. Once the user has an
+    # explicit default, later one-off edits for a single message stay
+    # temporary; the dedicated defaults endpoint changes the saved choice.
+    if not _has_saved_default_targets(config):
+        _save_default_target_ids(config, targets)
     async with SEND_LOCK:
         path = _receipt_path(question_id, config)
         all_receipts = _read(path, {})

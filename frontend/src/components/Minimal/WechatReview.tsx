@@ -1,14 +1,26 @@
 import { useEffect, useRef, useState } from "react";
 import { request } from "../../services/api";
+import { keepAvailableSelection, parseDefaultTargetIds, selectAvailableDefaults } from "../../lib/wechatTargets";
 
 interface Target { id: string; name: string }
 interface Receipt { name: string; state: "sent" | "failed" | "unknown" | "pending"; message: string }
-interface Review { configured: boolean; targets: Target[]; receipts: Record<string, Receipt> }
+interface Review { configured: boolean; targets: Target[]; default_targets?: string[]; receipts: Record<string, Receipt> }
 interface Props { sessionId: string; questionId: string; text: string; onClose: () => void }
 const labels = { sent: "已发送", failed: "发送失败", unknown: "请先核对微信", pending: "发送中或待核对" };
 const blocked = (receipt?: Receipt) => receipt && receipt.state !== "failed";
 const errorText = (error: unknown) => error instanceof Error ? error.message.replace(/^API error \d+: /, "") : "暂时无法连接，请稍后重试。";
 const headers = { "Content-Type": "application/json", "X-Rebroadcast-Review": "1" };
+const DEFAULT_TARGETS_KEY = "suiting:wechat-default-targets";
+
+function readDefaultTargetIds(): string[] {
+  try { return parseDefaultTargetIds(window.localStorage.getItem(DEFAULT_TARGETS_KEY)); }
+  catch { return []; }
+}
+
+function writeDefaultTargetIds(ids: string[]) {
+  try { window.localStorage.setItem(DEFAULT_TARGETS_KEY, JSON.stringify(ids)); return true; }
+  catch { return false; }
+}
 
 export function WechatReview({ sessionId, questionId, text, onClose }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -19,12 +31,20 @@ export function WechatReview({ sessionId, questionId, text, onClose }: Props) {
   const [checked, setChecked] = useState(false);
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState("");
+  const [defaultTargetIds, setDefaultTargetIds] = useState<string[]>(() => readDefaultTargetIds());
   const path = `/sessions/${sessionId}/questions/${questionId}/wechat`;
   const eligible = selected.filter(id => !blocked(data.receipts[id]));
   useEffect(() => {
     dialog.current?.showModal();
     let current = true;
-    request<Review>(path).then(value => { if (current) setData(value); })
+    request<Review>(path).then(value => {
+      if (!current) return;
+      setData(value);
+      const saved = value.default_targets === undefined ? readDefaultTargetIds() : value.default_targets;
+      const defaults = selectAvailableDefaults(saved, value.targets);
+      setDefaultTargetIds(defaults);
+      setSelected(defaults);
+    })
       .catch(error => { if (current) setMessage(errorText(error)); })
       .finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
@@ -33,10 +53,34 @@ export function WechatReview({ sessionId, questionId, text, onClose }: Props) {
     setBusy(true); setChecked(false); setMessage("");
     try {
       const targets = await request<Target[]>(`${path}/groups`, { method: "POST", headers });
-      setData(previous => ({ ...previous, targets })); setSelected([]);
-      setMessage("群列表已更新，请重新勾选本次要发送的群。");
+      setData(previous => ({ ...previous, targets, default_targets: selectAvailableDefaults(previous.default_targets ?? defaultTargetIds, targets) }));
+      setSelected(previous => keepAvailableSelection(previous, targets));
+      setMessage("群列表已更新，本条文案的临时选择已保留。");
     } catch (error) { setMessage(errorText(error)); }
     finally { setBusy(false); }
+  }
+  async function saveDefaults() {
+    const ids = [...new Set(selected)];
+    setBusy(true); setMessage("");
+    try {
+      const result = await request<{ targets: string[] }>(`${path}/defaults`, {
+        method: "POST", headers, body: JSON.stringify({ targets: ids }),
+      });
+      const saved = result.targets ?? ids;
+      writeDefaultTargetIds(saved);
+      setDefaultTargetIds(saved);
+      setData(previous => ({ ...previous, default_targets: saved }));
+      setMessage(saved.length ? `已保存 ${saved.length} 个默认群组；本条文案仍可临时调整。` : "已清空默认群组；本条文案仍可临时调整。");
+    } catch (error) {
+      // Keep a browser-local fallback for an older backend while surfacing
+      // the failure so the user knows the setting was not synced.
+      if (writeDefaultTargetIds(ids)) {
+        setDefaultTargetIds(ids);
+        setMessage(`默认群组暂未同步到本机程序，已保存在当前浏览器：${errorText(error)}`);
+      } else {
+        setMessage(`${errorText(error)} 请稍后重试。`);
+      }
+    } finally { setBusy(false); }
   }
   async function send() {
     if (busy || !checked || !eligible.length) return;
@@ -58,8 +102,8 @@ export function WechatReview({ sessionId, questionId, text, onClose }: Props) {
     <p className="mr-note">以下正文会原样发送。需要修改时，请返回文案卡片，保存后再审核。</p>
     <div className="mr-wechat-preview"><p className="mr-copy-text">{text}</p></div>
     {loading ? <p role="status">正在读取连接和发送记录…</p> : !data.configured ? <p className="mr-alert">尚未连接微信，请先配置 GeWe。文案可以继续复制使用。</p> : <>
-      <div className="mr-section-title"><h3>发送到哪些群</h3><button disabled={busy} onClick={refresh}>刷新微信群</button></div>
-      <p className="mr-note">群列表来自微信中已保存到通讯录的群。找不到时，先在手机上把该群保存到通讯录，再刷新。</p>
+      <div className="mr-section-title"><h3>发送到哪些群</h3><div className="mr-actions"><button disabled={busy} onClick={refresh}>刷新微信群</button><button disabled={busy} onClick={saveDefaults}>保存为默认群组</button></div></div>
+      <p className="mr-note">群列表来自微信中已保存到通讯录的群。{defaultTargetIds.length ? `已自动勾选 ${defaultTargetIds.length} 个默认群组。` : "第一次选好群后，可以保存为默认群组。"}本条文案临时增删不会改变默认设置。</p>
       <input aria-label="搜索群名" value={search} disabled={busy} onChange={event => setSearch(event.target.value)} placeholder="搜索群名" />
       <div className="mr-wechat-targets">{data.targets.filter(target => target.name.toLowerCase().includes(search.toLowerCase())).map(target => <label key={target.id} className="mr-checkbox mr-wechat-target">
         <input type="checkbox" checked={selected.includes(target.id)} disabled={busy || Boolean(blocked(data.receipts[target.id]))} onChange={event => { setSelected(previous => event.target.checked ? [...previous, target.id] : previous.filter(id => id !== target.id)); setChecked(false); }} />

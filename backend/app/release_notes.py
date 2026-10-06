@@ -10,10 +10,20 @@ Bodies are GitHub-flavored markdown rendered in the Admin -> About tab. Keep
 them user-facing summaries (no download links or repo internals) and ASCII.
 """
 
-APP_VERSION = "0.1.2"
+APP_VERSION = "0.1.3"
 
 # Newest first; the first entry's version must equal APP_VERSION.
 RELEASE_NOTES: list[dict] = [
+    {
+        "version": "0.1.3",
+        "date": "2026-10-06",
+        "title": "默认群组会被记住",
+        "body": """微信群发送设置更适合连续直播了。
+
+- 第一次发送时选好的群会按当前 GeWe 微信账号保存，下一条文案打开审核窗口时自动勾选。
+- 也可以在审核窗口直接保存或清空默认群组；单条文案的临时增删不会改变已保存的默认设置。
+- 刷新群列表会保留本条文案的选择，换微信账号后不会沿用上一个账号的群。""",
+    },
     {
         "version": "0.1.2",
         "date": "2026-10-05",

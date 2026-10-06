@@ -61,6 +61,10 @@ class WechatReview(BaseModel):
     reviewed: Literal[True]
 
 
+class WechatDefaults(BaseModel):
+    targets: list[str] = Field(max_length=20)
+
+
 async def _wechat_question(session_id, question_id, db):
     question = await db.get(Question, question_id)
     if not question or question.session_id != session_id:
@@ -96,6 +100,24 @@ async def refresh_wechat_groups(session_id: uuid.UUID, question_id: uuid.UUID, r
     await _wechat_question(session_id, question_id, db)
     try:
         return await gewe.refresh_groups()
+    except gewe.GeweError as exc:
+        raise HTTPException(502, str(exc)) from None
+
+
+@router.post("/{question_id}/wechat/defaults")
+async def save_wechat_defaults(
+    session_id: uuid.UUID,
+    question_id: uuid.UUID,
+    body: WechatDefaults,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Remember the selected groups without sending a message."""
+    _review_origin(request)
+    await _wechat_question(session_id, question_id, db)
+    try:
+        targets = gewe.save_default_targets(body.targets) if body.targets else gewe.clear_default_targets()
+        return {"targets": targets}
     except gewe.GeweError as exc:
         raise HTTPException(502, str(exc)) from None
 

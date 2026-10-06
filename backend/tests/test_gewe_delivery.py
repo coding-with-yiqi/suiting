@@ -38,6 +38,46 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         post.assert_not_awaited()
         self.assertTrue(result["configured"])
         self.assertNotIn("test-only-secret", json.dumps(result))
+        self.assertEqual([], result["default_targets"])
+
+    async def test_default_targets_are_local_and_scoped_to_the_connected_account(self):
+        saved = gewe.save_default_targets(["a@chatroom", "filehelper", "a@chatroom"])
+        self.assertEqual(["a@chatroom", "filehelper"], saved)
+        self.assertEqual(
+            ["a@chatroom", "filehelper"],
+            gewe.review("question", "文案")["default_targets"],
+        )
+        gewe._write(
+            gewe.DATA_DIR / "gewe.json",
+            {"base_url": "https://example.invalid", "token": "other", "app_id": "other-device"},
+        )
+        self.assertEqual([], gewe.review("question", "文案")["default_targets"])
+
+    async def test_default_targets_can_be_cleared_without_network_access(self):
+        gewe.save_default_targets(["a@chatroom"])
+        with patch.object(gewe, "_post", new_callable=AsyncMock) as post:
+            self.assertEqual([], gewe.clear_default_targets())
+        post.assert_not_awaited()
+        self.assertEqual([], gewe.review("question", "文案")["default_targets"])
+
+    async def test_sending_a_reviewed_selection_remembers_it_without_an_extra_network_call(self):
+        with patch.object(gewe, "_post", new_callable=AsyncMock, side_effect=[True, {}]) as post:
+            await gewe.send_reviewed("question", "正文", ["b@chatroom"])
+        self.assertEqual(["b@chatroom"], gewe.review("question", "正文")["default_targets"])
+        self.assertEqual(2, post.await_count)
+
+    async def test_one_off_send_does_not_replace_an_explicit_default(self):
+        gewe.save_default_targets(["a@chatroom"])
+        with patch.object(gewe, "_post", new_callable=AsyncMock, side_effect=[True, {}]):
+            await gewe.send_reviewed("question", "正文", ["b@chatroom"])
+        self.assertEqual(["a@chatroom"], gewe.review("question", "正文")["default_targets"])
+
+    async def test_cleared_default_stays_cleared_after_a_one_off_send(self):
+        gewe.save_default_targets(["a@chatroom"])
+        gewe.clear_default_targets()
+        with patch.object(gewe, "_post", new_callable=AsyncMock, side_effect=[True, {}]):
+            await gewe.send_reviewed("question", "正文", ["b@chatroom"])
+        self.assertEqual([], gewe.review("question", "正文")["default_targets"])
 
     async def test_partial_failure_retries_only_failed_group(self):
         with patch.object(gewe, "_post", new_callable=AsyncMock, side_effect=[True, {"newMsgId": "18446744073709551615"}, gewe.GeweError("请求未接受")]) as post:
