@@ -42,6 +42,7 @@ export function WechatReview({ sessionId, questionId, text, onClose }: Props) {
       setData(value);
       const saved = value.default_targets === undefined ? readDefaultTargetIds() : value.default_targets;
       const defaults = selectAvailableDefaults(saved, value.targets);
+      if (value.default_targets !== undefined) writeDefaultTargetIds(defaults);
       setDefaultTargetIds(defaults);
       setSelected(defaults);
     })
